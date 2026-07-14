@@ -1,0 +1,58 @@
+# Dependencies and package-manager state
+node_modules/
+.pnpm-store/
+
+# Build, test, and tool output
+dist/
+coverage/
+.nyc_output/
+.vitest/
+.cache/
+.eslintcache
+*.tsbuildinfo
+*.tgz
+
+# Local eulr runtime data (credentials, config, sessions, logs, and music)
+.eulr/
+
+# Environment files and credentials
+.env
+.env.*
+!.env.example
+auth.json
+credentials.json
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+
+# Logs and diagnostic output
+logs/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Interrupted atomic writes and temporary files
+.*.eulr-*.tmp
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Local agent and IDE metadata
+.agents/
+.codex/
+.idea/
+.vscode/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+screenshot_referensi/
