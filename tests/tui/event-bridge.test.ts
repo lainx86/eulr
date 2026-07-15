@@ -229,6 +229,64 @@ describe("TuiStore and AgentTuiEventBridge", () => {
     expect(store.getSnapshot().activities.at(-1)?.status).toBe("failed");
   });
 
+  it("normalizes terminal-positioning characters in live and final output", () => {
+    const store = createStore();
+    const bridge = new AgentTuiEventBridge(store);
+    store.startRun("Run command");
+
+    bridge.handle(toolStarted("bash-control", "bash", "printf\tunsafe"));
+    bridge.handle({
+      type: "tool_output",
+      callId: "bash-control",
+      toolName: "bash",
+      stream: "stdout",
+      chunk: "first\tcolumn\rsecond line\n",
+    });
+    bridge.handle({
+      type: "tool_finished",
+      callId: "bash-control",
+      toolName: "bash",
+      isError: false,
+      summary: "Command\rcompleted",
+      content: "ok",
+      metadata: {
+        command: "printf\tunsafe",
+        stdout: "first\tcolumn\rsecond line\n",
+        stderr: "",
+        exitCode: 0,
+      },
+    });
+
+    const snapshot = store.getSnapshot();
+    expect(snapshot.inspector.output).toMatchObject({
+      command: "printf  unsafe",
+      stdout: "first   column\nsecond line\n",
+    });
+    expect(snapshot.activities.at(-1)).toMatchObject({
+      detail: "Command ↵ completed",
+    });
+    expect(JSON.stringify(snapshot.inspector.output)).not.toMatch(/[\t\r]/u);
+  });
+
+  it("scrolls away from and back to pinned panel output", () => {
+    const store = createStore();
+    store.startRun("Inspect output");
+    store.startOutput("generate output");
+    store.appendOutput(
+      "stdout",
+      Array.from({ length: 20 }, (_, index) => `line ${index}`).join("\n"),
+    );
+    store.setFocus("inspector");
+
+    store.scrollFocused(-1, false, 5);
+    expect(store.getSnapshot().scroll.inspector.output.vertical).toBe(14);
+
+    store.scrollFocused(1, false, 5);
+    expect(store.getSnapshot().scroll.inspector.output.vertical).toBe(
+      Number.MAX_SAFE_INTEGER,
+    );
+  });
+
   it("respects a manually selected inspector tab until an explicit force", () => {
     const store = createStore();
     const bridge = new AgentTuiEventBridge(store);

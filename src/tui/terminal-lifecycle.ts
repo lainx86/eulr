@@ -1,5 +1,6 @@
 import { appendFile, chmod, mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { format } from "node:util";
 
 import { redactText, redactValue } from "../auth/redaction.js";
 import { getEulrPaths } from "../config/data-paths.js";
@@ -79,6 +80,72 @@ export interface TerminalLogger {
     details?: unknown,
   ): void | Promise<void>;
   flush?(): Promise<void>;
+}
+
+export interface TuiConsole {
+  debug(...data: unknown[]): void;
+  error(...data: unknown[]): void;
+  info(...data: unknown[]): void;
+  log(...data: unknown[]): void;
+  trace(...data: unknown[]): void;
+  warn(...data: unknown[]): void;
+}
+
+/** Keeps React and dependency diagnostics out of the retained terminal frame. */
+export function captureTuiConsole(
+  logger: TerminalLogger,
+  target: TuiConsole = console,
+): () => void {
+  const original = {
+    debug: target.debug,
+    error: target.error,
+    info: target.info,
+    log: target.log,
+    trace: target.trace,
+    warn: target.warn,
+  };
+  const replacements: TuiConsole = {
+    debug: write("debug"),
+    error: write("error"),
+    info: write("info"),
+    log: write("info"),
+    trace: write("debug"),
+    warn: write("warn"),
+  };
+  let restored = false;
+
+  target.debug = replacements.debug;
+  target.error = replacements.error;
+  target.info = replacements.info;
+  target.log = replacements.log;
+  target.trace = replacements.trace;
+  target.warn = replacements.warn;
+
+  return () => {
+    if (restored) return;
+    restored = true;
+    target.debug = original.debug;
+    target.error = original.error;
+    target.info = original.info;
+    target.log = original.log;
+    target.trace = original.trace;
+    target.warn = original.warn;
+  };
+
+  function write(level: TerminalLogLevel): (...data: unknown[]) => void {
+    return (...data: unknown[]): void => {
+      try {
+        const operation = logger.log(
+          level,
+          "TUI console output",
+          redactText(format(...data)),
+        );
+        if (operation !== undefined) void operation.catch(() => undefined);
+      } catch {
+        // Diagnostics must never write through to the active terminal frame.
+      }
+    };
+  }
 }
 
 export interface RedactedFileLoggerOptions {

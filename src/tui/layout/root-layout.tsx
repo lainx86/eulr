@@ -9,15 +9,24 @@ import { InputArea } from "./input-area.js";
 import { IdleScreen } from "../screens/idle-screen.js";
 import { WorkingScreen } from "../screens/working-screen.js";
 import { Overlay } from "../overlays/overlay.js";
+import {
+  CommandPalette,
+  getSlashCommandSuggestions,
+} from "../overlays/command-palette.js";
 
 export function RootLayout({
   state,
   input,
   layout,
+  commandPalette,
 }: {
   state: TuiState;
   input: InputBufferSnapshot;
   layout: TuiLayout;
+  commandPalette?: {
+    visible: boolean;
+    selectedIndex: number;
+  };
 }): React.JSX.Element {
   const headerHeight = layout.main.height >= 5 ? 2 : 0;
   const contentHeight = Math.max(0, layout.main.height - headerHeight);
@@ -26,8 +35,18 @@ export function RootLayout({
     state.activities.length > 0 ||
     state.task !== undefined;
   const fullHeader = layout.width >= 120;
+  const commandSuggestions = commandPalette?.visible
+    ? getSlashCommandSuggestions(input.value)
+    : [];
+  const commandPaletteHeight = Math.min(
+    commandSuggestions.length + 2,
+    15,
+    layout.input.y,
+  );
+  const commandPaletteWidth = Math.min(66, Math.max(0, layout.width - 2));
   return (
     <Box
+      position="relative"
       width={layout.width}
       height={layout.height}
       flexDirection="column"
@@ -109,8 +128,10 @@ export function RootLayout({
           </Box>
         )}
         <Box
+          width={layout.main.width}
           height={contentHeight}
           backgroundColor={colors.background}
+          flexShrink={0}
           overflow="hidden"
         >
           {layout.main.height <= 0 ? null : working ? (
@@ -143,6 +164,16 @@ export function RootLayout({
         height={layout.input.height}
       />
       <BottomDock state={state} layout={layout} />
+      {commandPalette !== undefined && commandPaletteHeight >= 3 && (
+        <CommandPalette
+          items={commandSuggestions}
+          selectedIndex={commandPalette.selectedIndex}
+          width={commandPaletteWidth}
+          height={commandPaletteHeight}
+          top={layout.input.y - commandPaletteHeight}
+          left={layout.width >= 3 ? 1 : 0}
+        />
+      )}
     </Box>
   );
 }

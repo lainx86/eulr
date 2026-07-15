@@ -20,6 +20,7 @@ export function PanelFrame({
   children,
   accent = colors.accent,
 }: PanelFrameProps): React.JSX.Element {
+  const bodyHeight = Math.max(0, height - 3);
   return (
     <Box
       width={width}
@@ -30,6 +31,7 @@ export function PanelFrame({
       borderBackgroundColor={colors.surface}
       backgroundColor={colors.surface}
       borderDimColor={!active}
+      flexShrink={0}
       overflow="hidden"
     >
       <Box
@@ -47,9 +49,11 @@ export function PanelFrame({
         </Text>
       </Box>
       <Box
+        width="100%"
+        height={bodyHeight}
         flexDirection="column"
         paddingX={1}
-        flexGrow={1}
+        flexShrink={0}
         backgroundColor={colors.surface}
         overflow="hidden"
       >

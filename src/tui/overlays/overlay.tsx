@@ -52,7 +52,7 @@ export function Overlay({
           <Box flexDirection="column" marginTop={1} overflow="hidden">
             {overlay.items.slice(0, panelHeight - 5).map((item, index) => (
               <Text
-                key={item.id}
+                key={`${item.id}-${index}`}
                 color={
                   index === overlay.selectedIndex
                     ? colors.accent

@@ -1,5 +1,4 @@
 import type { TokenUsage } from "../../agent/messages.js";
-import { redactText } from "../../auth/redaction.js";
 import type { SessionState } from "../../sessions/state.js";
 import type {
   ActivityStatus,
@@ -17,6 +16,11 @@ import type {
   TuiState,
 } from "../types.js";
 import { emptyMusicUiState } from "../types.js";
+import {
+  displayLine,
+  displayOptionalLine,
+  displayText,
+} from "../display-text.js";
 
 const MAX_ACTIVITIES = 500;
 const MAX_ANSWER_CHARS = 200_000;
@@ -45,12 +49,12 @@ export class TuiStore {
       sessionId: options.session.id,
       version: options.version,
       phase: sessionPhase(options.session),
-      task: latestUserMessage(options.session),
-      activities: sessionActivities(options.session),
+      task: displayOptionalLine(latestUserMessage(options.session)),
+      activities: sessionActivities(options.session).map(sanitizeActivity),
       inspector: {
         activeTab: "answer",
         manuallySelected: false,
-        answer: latestAssistantText(options.session),
+        answer: displayText(latestAssistantText(options.session)),
       },
       companion: companionForPhase(sessionPhase(options.session)),
       focus: "input",
@@ -96,12 +100,12 @@ export class TuiStore {
       cwd: input.cwd,
       sessionId: input.session.id,
       phase,
-      task: latestUserMessage(input.session),
-      activities: sessionActivities(input.session),
+      task: displayOptionalLine(latestUserMessage(input.session)),
+      activities: sessionActivities(input.session).map(sanitizeActivity),
       inspector: {
         activeTab: "answer",
         manuallySelected: false,
-        answer: latestAssistantText(input.session),
+        answer: displayText(latestAssistantText(input.session)),
       },
       companion: companionForPhase(phase),
       statusMessage: statusForPhase(phase),
@@ -126,23 +130,27 @@ export class TuiStore {
   startRun(task: string): void {
     const activity: ActivityItem = {
       id: `run-${Date.now()}-${this.state.frame}`,
-      label: redactText(task),
+      label: displayLine(task),
       status: "active",
       timestamp: Date.now(),
     };
     this.patch({
       phase: "working",
-      task: redactText(task),
+      task: displayLine(task),
       activities: [...this.state.activities, activity].slice(-MAX_ACTIVITIES),
-      scroll: {
-        ...this.state.scroll,
-        activity: PINNED_TO_END,
-      },
       inspector: {
         ...this.state.inspector,
         activeTab: "answer",
         manuallySelected: false,
         answer: "",
+      },
+      scroll: {
+        ...this.state.scroll,
+        activity: PINNED_TO_END,
+        inspector: {
+          ...this.state.scroll.inspector,
+          answer: { vertical: PINNED_TO_END, horizontal: 0 },
+        },
       },
       companion: "thinking",
       statusMessage: "Working on the active task",
@@ -172,7 +180,7 @@ export class TuiStore {
       phase,
       activities,
       companion: companionForPhase(phase),
-      statusMessage: redactText(message),
+      statusMessage: displayLine(message),
       permission: undefined,
       focus: "input",
       inspector: {
@@ -186,21 +194,22 @@ export class TuiStore {
   setCompanion(companion: CompanionState, message?: string): void {
     this.patch({
       companion,
-      ...(message === undefined ? {} : { statusMessage: redactText(message) }),
+      ...(message === undefined ? {} : { statusMessage: displayLine(message) }),
     });
   }
 
   appendActivity(item: ActivityItem): void {
+    const currentRowCount = activityRowCount(this.state.activities);
     const wasPinned =
       this.state.scroll.activity === PINNED_TO_END ||
-      this.state.scroll.activity >= this.state.activities.length - 1;
+      this.state.scroll.activity >= currentRowCount - 1;
     this.patch({
       activities: [
         ...this.state.activities,
         {
           ...item,
-          label: redactText(item.label),
-          detail: redactOptional(item.detail),
+          label: displayLine(item.label),
+          detail: displayOptionalLine(item.detail),
         },
       ].slice(-MAX_ACTIVITIES),
       ...(wasPinned
@@ -223,10 +232,10 @@ export class TuiStore {
               ...update,
               ...(update.label === undefined
                 ? {}
-                : { label: redactText(update.label) }),
+                : { label: displayLine(update.label) }),
               ...(update.detail === undefined
                 ? {}
-                : { detail: redactText(update.detail) }),
+                : { detail: displayLine(update.detail) }),
             }
           : item,
       ),
@@ -234,7 +243,7 @@ export class TuiStore {
   }
 
   appendAnswer(text: string): void {
-    const answer = `${this.state.inspector.answer}${redactText(text)}`;
+    const answer = `${this.state.inspector.answer}${displayText(text)}`;
     this.patch({
       inspector: {
         ...this.state.inspector,
@@ -249,12 +258,19 @@ export class TuiStore {
         ...this.state.inspector,
         file: {
           ...file,
-          path: redactText(file.path),
-          content: redactText(file.content).slice(0, MAX_VIEW_CHARS),
+          path: displayLine(file.path),
+          content: displayText(file.content).slice(0, MAX_VIEW_CHARS),
           truncated:
             file.truncated === true || file.content.length > MAX_VIEW_CHARS,
         },
         activeTab: this.autoTab("file", force),
+      },
+      scroll: {
+        ...this.state.scroll,
+        inspector: {
+          ...this.state.scroll.inspector,
+          file: { vertical: 0, horizontal: 0 },
+        },
       },
     });
   }
@@ -265,18 +281,25 @@ export class TuiStore {
         ...this.state.inspector,
         change: {
           ...change,
-          path: redactText(change.path),
+          path: displayLine(change.path),
           before:
             change.before === null
               ? null
-              : redactText(change.before).slice(0, MAX_VIEW_CHARS),
-          after: redactText(change.after).slice(0, MAX_VIEW_CHARS),
+              : displayText(change.before).slice(0, MAX_VIEW_CHARS),
+          after: displayText(change.after).slice(0, MAX_VIEW_CHARS),
           truncated:
             change.truncated === true ||
             (change.before?.length ?? 0) > MAX_VIEW_CHARS ||
             change.after.length > MAX_VIEW_CHARS,
         },
         activeTab: this.autoTab("changes", force),
+      },
+      scroll: {
+        ...this.state.scroll,
+        inspector: {
+          ...this.state.scroll.inspector,
+          changes: { vertical: 0, horizontal: 0 },
+        },
       },
     });
   }
@@ -286,12 +309,19 @@ export class TuiStore {
       inspector: {
         ...this.state.inspector,
         output: {
-          command: redactText(command),
+          command: displayLine(command),
           stdout: "",
           stderr: "",
           running: true,
         },
         activeTab: this.autoTab("output", false),
+      },
+      scroll: {
+        ...this.state.scroll,
+        inspector: {
+          ...this.state.scroll.inspector,
+          output: { vertical: PINNED_TO_END, horizontal: 0 },
+        },
       },
     });
   }
@@ -303,7 +333,7 @@ export class TuiStore {
       stderr: "",
       running: true,
     };
-    const content = `${current[stream]}${redactText(chunk)}`;
+    const content = `${current[stream]}${displayText(chunk)}`;
     this.patch({
       inspector: {
         ...this.state.inspector,
@@ -323,7 +353,11 @@ export class TuiStore {
     this.patch({
       inspector: {
         ...this.state.inspector,
-        output: { ...current, ...update, running: false },
+        output: {
+          ...current,
+          ...sanitizeOutputUpdate(update),
+          running: false,
+        },
       },
     });
   }
@@ -366,7 +400,7 @@ export class TuiStore {
   }
 
   setQueuedFollowUp(message: string | undefined): void {
-    this.patch({ queuedFollowUp: redactOptional(message) });
+    this.patch({ queuedFollowUp: displayOptionalLine(message) });
   }
 
   setUsage(usage: TokenUsage): void {
@@ -397,8 +431,10 @@ export class TuiStore {
         providerId,
         status: "ready",
         models: models.map((model) => ({
-          id: redactText(model.id),
-          ...(model.name === undefined ? {} : { name: redactText(model.name) }),
+          id: displayLine(model.id),
+          ...(model.name === undefined
+            ? {}
+            : { name: displayLine(model.name) }),
         })),
       },
     });
@@ -415,7 +451,7 @@ export class TuiStore {
           existing.providerId === providerId && existing.models.length > 0
             ? existing.models
             : [{ id: this.state.model }],
-        error: redactText(error),
+        error: displayLine(error),
       },
     });
   }
@@ -425,7 +461,7 @@ export class TuiStore {
   }
 
   setStatus(message: string): void {
-    this.patch({ statusMessage: redactText(message) });
+    this.patch({ statusMessage: displayLine(message) });
   }
 
   setOverlay(overlay: OverlayState | undefined): void {
@@ -453,19 +489,21 @@ export class TuiStore {
     this.patch({ focus: FOCUS_ORDER[next] ?? "input" });
   }
 
-  scrollFocused(delta: number, horizontal = false): void {
+  scrollFocused(delta: number, horizontal = false, viewportHeight = 0): void {
     if (this.state.focus === "activity") {
       const current = this.state.scroll.activity;
+      const rowCount = activityRowCount(this.state.activities);
+      const endStart = Math.max(0, rowCount - Math.max(0, viewportHeight));
       const next =
         current === PINNED_TO_END
           ? delta < 0
-            ? Math.max(0, this.state.activities.length + delta)
+            ? Math.max(0, endStart + delta)
             : PINNED_TO_END
           : Math.max(0, current + delta);
       this.patch({
         scroll: {
           ...this.state.scroll,
-          activity: next >= this.state.activities.length ? PINNED_TO_END : next,
+          activity: next >= endStart ? PINNED_TO_END : next,
         },
       });
       return;
@@ -473,6 +511,14 @@ export class TuiStore {
     if (this.state.focus !== "inspector") return;
     const tab = this.state.inspector.activeTab;
     const current = this.state.scroll.inspector[tab];
+    const lineCount = inspectorLineCount(this.state, tab);
+    const endStart = Math.max(0, lineCount - Math.max(0, viewportHeight));
+    const nextVertical =
+      current.vertical === PINNED_TO_END
+        ? delta < 0
+          ? Math.max(0, endStart + delta)
+          : PINNED_TO_END
+        : Math.max(0, current.vertical + delta);
     this.patch({
       scroll: {
         ...this.state.scroll,
@@ -483,7 +529,11 @@ export class TuiStore {
                 ...current,
                 horizontal: Math.max(0, current.horizontal + delta),
               }
-            : { ...current, vertical: Math.max(0, current.vertical + delta) },
+            : {
+                ...current,
+                vertical:
+                  nextVertical >= endStart ? PINNED_TO_END : nextVertical,
+              },
         },
       },
     });
@@ -635,34 +685,82 @@ function statusForPhase(phase: RunPhase): string {
   return "eulr is idle and ready · No active task";
 }
 
-function redactOptional(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : redactText(value);
-}
-
 function sanitizeMusic(music: MusicUiState): MusicUiState {
   return {
     ...music,
-    statusMessage: redactText(music.statusMessage),
+    statusMessage: displayLine(music.statusMessage),
     ...(music.libraryPath === undefined
       ? {}
-      : { libraryPath: redactText(music.libraryPath) }),
+      : { libraryPath: displayLine(music.libraryPath) }),
     ...(music.track === undefined
       ? {}
       : {
           track: {
             ...music.track,
-            id: redactText(music.track.id),
-            title: redactText(music.track.title),
+            id: displayLine(music.track.id),
+            title: displayLine(music.track.title),
             ...(music.track.artist === undefined
               ? {}
-              : { artist: redactText(music.track.artist) }),
+              : { artist: displayLine(music.track.artist) }),
             ...(music.track.album === undefined
               ? {}
-              : { album: redactText(music.track.album) }),
+              : { album: displayLine(music.track.album) }),
             ...(music.track.path === undefined
               ? {}
-              : { path: redactText(music.track.path) }),
+              : { path: displayLine(music.track.path) }),
           },
         }),
+  };
+}
+
+function sanitizeActivity(item: ActivityItem): ActivityItem {
+  return {
+    ...item,
+    label: displayLine(item.label),
+    detail: displayOptionalLine(item.detail),
+  };
+}
+
+function activityRowCount(activities: readonly ActivityItem[]): number {
+  return activities.reduce(
+    (count, activity) => count + 1 + (activity.detail === undefined ? 0 : 1),
+    0,
+  );
+}
+
+function inspectorLineCount(state: TuiState, tab: InspectorTab): number {
+  if (tab === "file") {
+    return lineCount(state.inspector.file?.content ?? "");
+  }
+  if (tab === "output") {
+    const output = state.inspector.output;
+    return output === undefined
+      ? 0
+      : lineCount(output.stdout) + lineCount(output.stderr);
+  }
+  if (tab === "answer") return lineCount(state.inspector.answer);
+  const change = state.inspector.change;
+  if (change === undefined) return 0;
+  return lineCount(change.before ?? "") + lineCount(change.after);
+}
+
+function lineCount(value: string): number {
+  return value === "" ? 0 : value.split("\n").length;
+}
+
+function sanitizeOutputUpdate(
+  update: Partial<OutputViewState>,
+): Partial<OutputViewState> {
+  return {
+    ...update,
+    ...(update.command === undefined
+      ? {}
+      : { command: displayLine(update.command) }),
+    ...(update.stdout === undefined
+      ? {}
+      : { stdout: displayText(update.stdout) }),
+    ...(update.stderr === undefined
+      ? {}
+      : { stderr: displayText(update.stderr) }),
   };
 }

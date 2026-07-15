@@ -3,6 +3,13 @@ import { Box, Text } from "ink";
 import type { ActivityItem } from "../types.js";
 import { colors } from "../theme/colors.js";
 import { PanelFrame } from "./panel-frame.js";
+import { viewportSlice } from "./view-utils.js";
+
+interface ActivityRow {
+  key: string;
+  text: string;
+  color: string;
+}
 
 export function ActivityPanel({
   task,
@@ -22,9 +29,8 @@ export function ActivityPanel({
   frame: number;
 }): React.JSX.Element {
   const bodyHeight = Math.max(0, height - 5);
-  const available = activities.slice(
-    Math.max(0, Math.min(offset, Math.max(0, activities.length - bodyHeight))),
-  );
+  const rows = buildActivityRows(activities, frame, bodyHeight > 4);
+  const viewport = viewportSlice(rows, bodyHeight, offset);
   return (
     <PanelFrame
       title="ACTIVITY / PROGRESS"
@@ -39,18 +45,24 @@ export function ActivityPanel({
           </Text>
         </Box>
       )}
-      <Box flexDirection="column" height={bodyHeight} overflow="hidden">
-        {available.slice(0, bodyHeight).map((item) => (
-          <Box key={item.id} flexDirection="column" flexShrink={0}>
-            <Text color={statusColor(item.status)} wrap="truncate-end">
-              {statusSymbol(item.status, frame)} {item.label}
+      <Box
+        flexDirection="column"
+        width="100%"
+        height={bodyHeight}
+        flexShrink={0}
+        overflow="hidden"
+      >
+        {viewport.items.map((row) => (
+          <Box
+            key={row.key}
+            width="100%"
+            height={1}
+            flexShrink={0}
+            overflow="hidden"
+          >
+            <Text color={row.color} wrap="truncate-end">
+              {row.text}
             </Text>
-            {item.detail !== undefined && bodyHeight > 4 && (
-              <Text color={colors.muted} wrap="truncate-end">
-                {"  └─ "}
-                {item.detail}
-              </Text>
-            )}
           </Box>
         ))}
         {activities.length === 0 && (
@@ -59,6 +71,30 @@ export function ActivityPanel({
       </Box>
     </PanelFrame>
   );
+}
+
+function buildActivityRows(
+  activities: readonly ActivityItem[],
+  frame: number,
+  showDetails: boolean,
+): ActivityRow[] {
+  return activities.flatMap((item, itemIndex) => {
+    const rows: ActivityRow[] = [
+      {
+        key: `${item.id}-${itemIndex}-label`,
+        text: `${statusSymbol(item.status, frame)} ${item.label}`,
+        color: statusColor(item.status),
+      },
+    ];
+    if (showDetails && item.detail !== undefined) {
+      rows.push({
+        key: `${item.id}-${itemIndex}-detail`,
+        text: `  └─ ${item.detail}`,
+        color: colors.muted,
+      });
+    }
+    return rows;
+  });
 }
 
 function statusColor(status: ActivityItem["status"]): string {

@@ -2,7 +2,8 @@ import { Box, Text } from "ink";
 
 import type { OutputViewState } from "../types.js";
 import { colors } from "../theme/colors.js";
-import { viewportLines } from "./view-utils.js";
+import { displayLine } from "../display-text.js";
+import { viewportSlice } from "./view-utils.js";
 
 export function OutputView({
   output,
@@ -23,16 +24,8 @@ export function OutputView({
     ...output.stdout.split("\n").map((line) => ({ stream: "stdout", line })),
     ...output.stderr.split("\n").map((line) => ({ stream: "stderr", line })),
   ];
-  const visible = viewportLines(
-    lines.map(({ line }) => line),
-    height - 2,
-    vertical,
-    width - 1,
-    horizontal,
-  );
-  const source = lines.slice(
-    Math.min(vertical, Math.max(0, lines.length - (height - 2))),
-  );
+  const viewport = viewportSlice(lines, height - 2, vertical);
+  const contentWidth = Math.max(0, width - 1);
   return (
     <Box flexDirection="column" height={height} overflow="hidden">
       <Text color={colors.accent} wrap="truncate-middle">
@@ -50,19 +43,21 @@ export function OutputView({
         {output.running ? "running" : `exit ${output.exitCode ?? "unknown"}`}
         {output.truncated ? " · output truncated" : ""}
       </Text>
-      {visible.map((line, index) => (
-        <Text
-          key={`${vertical + index}-${line}`}
-          color={
-            source[index]?.stream === "stderr"
-              ? colors.danger
-              : colors.foreground
-          }
-          wrap="truncate-end"
-        >
-          {line || " "}
-        </Text>
-      ))}
+      {viewport.items.map((item, index) => {
+        const line = displayLine(item.line).slice(
+          Math.max(0, horizontal),
+          Math.max(0, horizontal) + contentWidth,
+        );
+        return (
+          <Text
+            key={`${viewport.start + index}-${item.stream}`}
+            color={item.stream === "stderr" ? colors.danger : colors.foreground}
+            wrap="truncate-end"
+          >
+            {line || " "}
+          </Text>
+        );
+      })}
     </Box>
   );
 }

@@ -99,6 +99,44 @@ describe("RootLayout rendering", () => {
     expect(renderRoot(store, 80, 24)).not.toContain("alt+enter newline");
   });
 
+  it("anchors slash commands above the input without moving persistent regions", () => {
+    const store = createStore();
+    const idle = renderRoot(store, 140, 42).split("\n");
+    const slashInput: InputBufferSnapshot = {
+      value: "/",
+      cursor: 1,
+      selection: null,
+    };
+    const withPalette = renderRoot(store, 140, 42, slashInput, true).split(
+      "\n",
+    );
+
+    const firstCommandLine = findLine(withPalette, "/help");
+    const inputLine = findLine(withPalette, "eulr ›");
+    expect(firstCommandLine).toBeLessThan(inputLine);
+    expect(withPalette[firstCommandLine]?.indexOf("/help")).toBeLessThan(8);
+    expect(withPalette.join("\n")).toContain("/model [model-id]");
+    expect(findLine(withPalette, "eulr ›")).toBe(findLine(idle, "eulr ›"));
+    expect(findLine(withPalette, "EULR COMPANION")).toBe(
+      findLine(idle, "EULR COMPANION"),
+    );
+  });
+
+  it("renders a bounded slash palette in minimum mode", () => {
+    const store = createStore();
+    const output = renderRoot(
+      store,
+      40,
+      12,
+      { value: "/", cursor: 1, selection: null },
+      true,
+    );
+
+    expect(output).toContain("/help");
+    expect(output.split("\n")).toHaveLength(12);
+    expect(output).toContain("EULR");
+  });
+
   it("scrolling activity and inspector does not move input or dock", () => {
     const store = createStore();
     store.startRun("Inspect many files");
@@ -122,6 +160,53 @@ describe("RootLayout rendering", () => {
     expect(findLine(after, "EULR COMPANION")).toBe(
       findLine(before, "EULR COMPANION"),
     );
+  });
+
+  it("isolates large tabbed panel content from input and dock", () => {
+    const width = 175;
+    const height = 51;
+    const store = createStore();
+    store.startRun("Inspect\tthe repository\rwithout moving the layout");
+    for (let index = 0; index < 60; index += 1) {
+      store.appendActivity({
+        id: `dense-${index}`,
+        label: `Reading\tsrc/${"nested/".repeat(20)}file-${index}.go`,
+        detail: `Command:\trg ${"long-pattern ".repeat(30)}\rfinished`,
+        status: "completed",
+        timestamp: index,
+      });
+    }
+    store.setFile({
+      path: "external/provider.go",
+      content: Array.from(
+        { length: 100 },
+        (_, index) =>
+          `\t${index}\tconst value = ${"longIdentifier".repeat(30)}`,
+      ).join("\n"),
+    });
+    store.setFocus("inspector");
+
+    const layout = computeLayout(width, height);
+    const before = renderRoot(store, width, height).split("\n");
+    store.scrollFocused(24);
+    store.setFocus("activity");
+    store.scrollHome();
+    store.scrollFocused(12);
+    const after = renderRoot(store, width, height).split("\n");
+
+    for (const frame of [before, after]) {
+      expect(frame).toHaveLength(height);
+      expect(frame.join("\n")).not.toMatch(/[\t\r]/u);
+      expect(frame.every((line) => Array.from(line).length <= width)).toBe(
+        true,
+      );
+      expect(findLine(frame, "eulr ›")).toBe(layout.input.y + 1);
+      expect(findLine(frame, "EULR COMPANION")).toBe(layout.dock.y + 1);
+
+      const inputLine = findLine(frame, "eulr ›");
+      expect(frame.slice(inputLine).join("\n")).not.toContain("longIdentifier");
+      expect(frame.slice(inputLine).join("\n")).not.toContain("Reading src/");
+    }
   });
 
   it("renders a permission prompt inside input while preserving the dock", () => {
@@ -185,13 +270,23 @@ describe("RootLayout rendering", () => {
   });
 });
 
-function renderRoot(store: TuiStore, width: number, height: number): string {
+function renderRoot(
+  store: TuiStore,
+  width: number,
+  height: number,
+  input: InputBufferSnapshot = EMPTY_INPUT,
+  commandPaletteVisible = false,
+): string {
   const layout = computeLayout(width, height);
   return renderToString(
     createElement(RootLayout, {
       state: store.getSnapshot(),
-      input: EMPTY_INPUT,
+      input,
       layout,
+      commandPalette: {
+        visible: commandPaletteVisible,
+        selectedIndex: 0,
+      },
     }),
     { columns: Math.max(1, width) },
   );

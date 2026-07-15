@@ -1,6 +1,5 @@
 import type { AgentEvent, AgentEventSink } from "../agent/events.js";
 import type { TokenUsage } from "../agent/messages.js";
-import { redactText } from "../auth/redaction.js";
 import type {
   PermissionDecision,
   PermissionRequest,
@@ -12,6 +11,7 @@ import type {
   OutputViewState,
 } from "./types.js";
 import { TuiStore } from "./state/tui-store.js";
+import { displayLine } from "./display-text.js";
 
 interface PendingPermission {
   resolve: (decision: PermissionDecision) => void;
@@ -264,11 +264,11 @@ function record(value: unknown): Record<string, unknown> {
 function sanitizePermission(request: PermissionRequest): PermissionRequest {
   return {
     ...request,
-    target: redactText(request.target),
+    target: displayLine(request.target),
     ...(request.description === undefined
       ? {}
-      : { description: redactText(request.description) }),
-    ...(request.risk === undefined ? {} : { risk: redactText(request.risk) }),
+      : { description: displayLine(request.description) }),
+    ...(request.risk === undefined ? {} : { risk: displayLine(request.risk) }),
   };
 }
 

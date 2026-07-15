@@ -15,6 +15,88 @@ export type InteractiveCommand =
   | { name: "exit" }
   | { name: "unknown"; input: string; reason?: string };
 
+export interface InteractiveCommandDefinition {
+  readonly command: `/${string}`;
+  readonly usage: string;
+  readonly description: string;
+  readonly completion: string;
+}
+
+export const INTERACTIVE_COMMANDS: readonly InteractiveCommandDefinition[] = [
+  {
+    command: "/help",
+    usage: "/help",
+    description: "Show interactive commands",
+    completion: "/help",
+  },
+  {
+    command: "/login",
+    usage: "/login",
+    description: "Authenticate a provider",
+    completion: "/login",
+  },
+  {
+    command: "/logout",
+    usage: "/logout",
+    description: "Remove the active provider credential",
+    completion: "/logout",
+  },
+  {
+    command: "/model",
+    usage: "/model [model-id]",
+    description: "Show or select the model",
+    completion: "/model ",
+  },
+  {
+    command: "/new",
+    usage: "/new",
+    description: "Start a new session",
+    completion: "/new",
+  },
+  {
+    command: "/resume",
+    usage: "/resume [session-id]",
+    description: "Resume a session or choose one",
+    completion: "/resume ",
+  },
+  {
+    command: "/sessions",
+    usage: "/sessions",
+    description: "List recent sessions",
+    completion: "/sessions",
+  },
+  {
+    command: "/music",
+    usage: "/music <command>",
+    description: "Control local music playback",
+    completion: "/music ",
+  },
+  {
+    command: "/compact",
+    usage: "/compact",
+    description: "Compact older context",
+    completion: "/compact",
+  },
+  {
+    command: "/status",
+    usage: "/status",
+    description: "Show provider, model, cwd, session, and usage",
+    completion: "/status",
+  },
+  {
+    command: "/clear",
+    usage: "/clear",
+    description: "Clear the terminal without deleting history",
+    completion: "/clear",
+  },
+  {
+    command: "/exit",
+    usage: "/exit",
+    description: "Save and exit",
+    completion: "/exit",
+  },
+] as const;
+
 export function parseInteractiveCommand(
   input: string,
 ): InteractiveCommand | undefined {
@@ -104,15 +186,11 @@ function invalidMusic(input: string, reason: string): InteractiveCommand {
   return { name: "unknown", input, reason };
 }
 
-export const INTERACTIVE_HELP = `/help                 Show interactive commands
-/login                Authenticate a provider
-/logout               Remove the active provider credential
-/model [model-id]      Show or select the model
-/new                   Start a new session
-/resume [session-id]   Resume a session or choose one
-/sessions              List recent sessions
-/music <command>       Control local music playback
-/compact               Compact older context
-/status                Show provider, model, cwd, session, and usage
-/clear                 Clear the terminal without deleting history
-/exit                  Save and exit`;
+const HELP_USAGE_WIDTH = Math.max(
+  ...INTERACTIVE_COMMANDS.map((definition) => definition.usage.length),
+);
+
+export const INTERACTIVE_HELP = INTERACTIVE_COMMANDS.map(
+  ({ usage, description }) =>
+    `${usage.padEnd(HELP_USAGE_WIDTH + 3)}${description}`,
+).join("\n");

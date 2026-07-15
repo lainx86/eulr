@@ -137,9 +137,9 @@ function DetailedContent({
             {symbols.selected} Available models
           </Text>
           <Box marginTop={1} flexDirection="column" overflow="hidden">
-            {models.slice(0, 5).map((model) => (
+            {models.slice(0, 5).map((model, index) => (
               <ModelRow
-                key={model.id}
+                key={`${model.id}-${index}`}
                 model={model}
                 active={model.id === state.model}
               />

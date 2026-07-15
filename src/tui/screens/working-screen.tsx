@@ -66,6 +66,7 @@ export function WorkingScreen({
       height={height}
       columnGap={gap}
       backgroundColor={colors.background}
+      flexShrink={0}
       overflow="hidden"
     >
       <ActivityPanel

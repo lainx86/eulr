@@ -9,11 +9,8 @@ All tracks in this directory are provided under CC0 1.0. No attribution is
 required. Do not add audio under a different license without documenting that
 license and its redistribution requirements here.
 
-Current playlist:
-
-- `TownTheme.mp3`
-- `awesomeness.wav`
-- `b423b42.wav`
-- `the_field_of_dreams.mp3`
+Every supported audio file under `tracks/` is discovered at runtime and sorted
+deterministically by its relative path. New CC0 tracks can be added without
+updating a hard-coded manifest.
 
 SPDX-License-Identifier: CC0-1.0

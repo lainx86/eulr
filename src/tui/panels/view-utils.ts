@@ -1,5 +1,7 @@
 import { diffLines } from "diff";
 
+import { displayLine, displayText } from "../display-text.js";
+
 export interface DiffDisplayLine {
   kind: "context" | "added" | "removed";
   oldLine?: number;
@@ -14,7 +16,10 @@ export function buildDiffLines(
   const result: DiffDisplayLine[] = [];
   let oldLine = 1;
   let newLine = 1;
-  for (const part of diffLines(before ?? "", after)) {
+  for (const part of diffLines(
+    before === null ? "" : displayText(before),
+    displayText(after),
+  )) {
     const lines = trimDiffTerminator(part.value.split("\n"));
     for (const text of lines) {
       if (part.added) {
@@ -40,13 +45,24 @@ export function viewportLines(
   width: number,
   horizontal = 0,
 ): string[] {
-  const safeHeight = Math.max(0, Math.floor(height));
   const safeWidth = Math.max(0, Math.floor(width));
-  const maxStart = Math.max(0, lines.length - safeHeight);
+  return viewportSlice(lines, height, vertical).items.map((line) =>
+    displayLine(line).slice(Math.max(0, horizontal), horizontal + safeWidth),
+  );
+}
+
+export function viewportSlice<T>(
+  items: readonly T[],
+  height: number,
+  vertical: number,
+): { start: number; items: readonly T[] } {
+  const safeHeight = Math.max(0, Math.floor(height));
+  const maxStart = Math.max(0, items.length - safeHeight);
   const start = Math.min(Math.max(0, Math.floor(vertical)), maxStart);
-  return lines
-    .slice(start, start + safeHeight)
-    .map((line) => line.slice(Math.max(0, horizontal), horizontal + safeWidth));
+  return {
+    start,
+    items: items.slice(start, start + safeHeight),
+  };
 }
 
 export function formatDuration(seconds: number): string {

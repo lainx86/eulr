@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useApp, useCursor, useInput, usePaste, useWindowSize } from "ink";
+import { useApp, useInput, usePaste, useWindowSize } from "ink";
 
 import { computeLayout } from "./layout/constraints.js";
 import { RootLayout } from "./layout/root-layout.js";
 import { InputBuffer, type InputBufferSnapshot } from "./state/input-buffer.js";
 import type { TuiStore } from "./state/tui-store.js";
 import type { TuiController } from "./tui-controller.js";
+import {
+  clampCommandSelection,
+  getSlashCommandSuggestions,
+  moveCommandSelection,
+} from "./overlays/command-palette.js";
 
 export function TuiApp({
   store,
@@ -23,14 +28,23 @@ export function TuiApp({
   );
   const { columns, rows } = useWindowSize();
   const { exit, suspendTerminal } = useApp();
-  const { setCursorPosition } = useCursor();
   const buffer = useRef(new InputBuffer());
   const [input, setInput] = useState<InputBufferSnapshot>(() =>
     buffer.current.snapshot(),
   );
+  const [commandSelection, setCommandSelection] = useState(0);
+  const [dismissedCommandInput, setDismissedCommandInput] = useState<
+    string | undefined
+  >();
   const initialTaskStarted = useRef(false);
 
-  const refreshInput = (): void => setInput(buffer.current.snapshot());
+  const refreshInput = (contentChanged = false): void => {
+    setInput(buffer.current.snapshot());
+    if (contentChanged) {
+      setCommandSelection(0);
+      setDismissedCommandInput(undefined);
+    }
+  };
 
   useEffect(() => {
     controller.bindApp({
@@ -56,48 +70,32 @@ export function TuiApp({
   }, [controller, initialTask]);
 
   const layout = computeLayout(columns, rows);
-  useEffect(() => {
-    if (
-      state.focus !== "input" ||
-      state.permission !== undefined ||
-      state.overlay !== undefined ||
-      layout.input.height < 2
-    ) {
-      setCursorPosition(undefined);
-      return;
-    }
-    const prefixWidth = 7;
-    const editableWidth = Math.max(1, layout.input.width - prefixWidth - 4);
-    const beforeCursor = input.value.slice(0, input.cursor);
-    const logicalLines = beforeCursor.split("\n");
-    const lastLine = logicalLines.at(-1) ?? "";
-    const wrappedRows = Math.floor(lastLine.length / editableWidth);
-    const row = Math.min(
-      Math.max(0, layout.input.height - 3),
-      logicalLines.length - 1 + wrappedRows,
-    );
-    setCursorPosition({
-      x: Math.min(
-        layout.input.width - 2,
-        prefixWidth + 2 + (lastLine.length % editableWidth),
-      ),
-      y: layout.input.y + 1 + row,
-    });
-    return () => setCursorPosition(undefined);
-  }, [
-    input,
-    layout.input,
-    setCursorPosition,
-    state.focus,
-    state.overlay,
-    state.permission,
-  ]);
+  const commandSuggestions = getSlashCommandSuggestions(input.value);
+  const commandPaletteVisible =
+    state.focus === "input" &&
+    state.permission === undefined &&
+    state.overlay === undefined &&
+    dismissedCommandInput !== input.value &&
+    commandSuggestions.length > 0;
+  const activeCommandIndex = clampCommandSelection(
+    commandSelection,
+    commandSuggestions.length,
+  );
+  const mainHeaderHeight = layout.main.height >= 5 ? 2 : 0;
+  const workingContentHeight = Math.max(
+    0,
+    layout.main.height - mainHeaderHeight,
+  );
+  const focusedViewportHeight = Math.max(
+    0,
+    workingContentHeight - (layout.mode === "minimum" ? 1 : 0) - 5,
+  );
 
   usePaste((text) => {
     if (state.permission !== undefined || state.overlay !== undefined) return;
     store.setFocus("input");
     buffer.current.paste(text);
-    refreshInput();
+    refreshInput(true);
   });
 
   useInput((value, key) => {
@@ -119,6 +117,32 @@ export function TuiApp({
       return;
     }
 
+    if (commandPaletteVisible) {
+      if (key.escape) {
+        setDismissedCommandInput(input.value);
+        return;
+      }
+      if (key.upArrow || key.downArrow) {
+        setCommandSelection((selection) =>
+          moveCommandSelection(
+            selection,
+            key.upArrow ? -1 : 1,
+            commandSuggestions.length,
+          ),
+        );
+        return;
+      }
+      const selectedCommand = commandSuggestions[activeCommandIndex];
+      if (
+        selectedCommand !== undefined &&
+        (key.tab || (key.return && input.value !== selectedCommand.command))
+      ) {
+        buffer.current.setValue(selectedCommand.completion);
+        refreshInput(true);
+        return;
+      }
+    }
+
     if (key.ctrl && value.toLowerCase() === "c") {
       controller.interrupt();
       return;
@@ -137,7 +161,7 @@ export function TuiApp({
       return;
     }
     if (key.pageUp || key.pageDown) {
-      store.scrollFocused(key.pageUp ? -8 : 8);
+      store.scrollFocused(key.pageUp ? -8 : 8, false, focusedViewportHeight);
       return;
     }
     if (key.home && state.focus !== "input") {
@@ -157,16 +181,20 @@ export function TuiApp({
     }
     if (state.focus === "inspector") {
       if (key.leftArrow || key.rightArrow) {
-        store.cycleInspector(key.leftArrow);
+        if (key.shift) {
+          store.scrollFocused(key.leftArrow ? -4 : 4, true);
+        } else {
+          store.cycleInspector(key.leftArrow);
+        }
         return;
       }
       if (key.upArrow || key.downArrow) {
-        store.scrollFocused(key.upArrow ? -1 : 1);
+        store.scrollFocused(key.upArrow ? -1 : 1, false, focusedViewportHeight);
         return;
       }
     }
     if (state.focus === "activity" && (key.upArrow || key.downArrow)) {
-      store.scrollFocused(key.upArrow ? -1 : 1);
+      store.scrollFocused(key.upArrow ? -1 : 1, false, focusedViewportHeight);
       return;
     }
 
@@ -182,35 +210,56 @@ export function TuiApp({
         const submitted = buffer.current.submit();
         controller.submit(submitted);
       }
-      refreshInput();
+      refreshInput(true);
       return;
     }
-    if (key.backspace) buffer.current.backspace();
-    else if (key.delete) buffer.current.delete();
-    else if (key.leftArrow) buffer.current.moveLeft(key.shift);
+    let contentChanged = false;
+    if (key.backspace) {
+      buffer.current.backspace();
+      contentChanged = true;
+    } else if (key.delete) {
+      buffer.current.delete();
+      contentChanged = true;
+    } else if (key.leftArrow) buffer.current.moveLeft(key.shift);
     else if (key.rightArrow) buffer.current.moveRight(key.shift);
     else if (key.home) buffer.current.moveHome(key.shift);
     else if (key.end) buffer.current.moveEnd(key.shift);
     else if (key.upArrow) {
-      if (key.ctrl || !buffer.current.value.includes("\n"))
+      if (key.ctrl || !buffer.current.value.includes("\n")) {
         buffer.current.historyUp();
-      else buffer.current.moveUp(key.shift);
+        contentChanged = true;
+      } else buffer.current.moveUp(key.shift);
     } else if (key.downArrow) {
-      if (key.ctrl || !buffer.current.value.includes("\n"))
+      if (key.ctrl || !buffer.current.value.includes("\n")) {
         buffer.current.historyDown();
-      else buffer.current.moveDown(key.shift);
+        contentChanged = true;
+      } else buffer.current.moveDown(key.shift);
     } else if (key.ctrl && value.toLowerCase() === "a")
       buffer.current.selectAll();
-    else if (key.ctrl && value.toLowerCase() === "p")
+    else if (key.ctrl && value.toLowerCase() === "p") {
       buffer.current.historyUp();
-    else if (key.ctrl && value.toLowerCase() === "n")
+      contentChanged = true;
+    } else if (key.ctrl && value.toLowerCase() === "n") {
       buffer.current.historyDown();
-    else if (!key.ctrl && !key.meta && value !== "")
+      contentChanged = true;
+    } else if (!key.ctrl && !key.meta && value !== "") {
       buffer.current.insert(value);
-    refreshInput();
+      contentChanged = true;
+    }
+    refreshInput(contentChanged);
   });
 
-  return <RootLayout state={state} input={input} layout={layout} />;
+  return (
+    <RootLayout
+      state={state}
+      input={input}
+      layout={layout}
+      commandPalette={{
+        visible: commandPaletteVisible,
+        selectedIndex: activeCommandIndex,
+      }}
+    />
+  );
 }
 
 function handleMusicInput(

@@ -151,6 +151,13 @@ During a task it becomes an activity timeline and context inspector with
 write/edit metadata produces an in-memory diff (including new files and
 repositories without commits), command streams open Output, and final text
 opens Answer. Activity and inspector scrolling never moves the input or dock.
+Scrolling is scoped to those two panels only; the input, companion, and music
+player remain fixed regardless of viewport length or focus changes.
+
+Tabs, carriage returns, and other terminal-positioning controls from source or
+command output are normalized before rendering. React and dependency console
+diagnostics are redirected to the redacted TUI log instead of being written
+over the retained screen.
 
 The layout switches between full, compact, and minimum modes on resize. In
 minimum mode one main panel is visible at a time, while input, companion, and
@@ -164,6 +171,7 @@ Tab / Shift+Tab       move focus
 PageUp / PageDown     scroll focused panel
 Home / End            start/end of focused viewport
 Left / Right          change inspector tab; seek when music is focused
+Shift+Left / Right    scroll inspector content horizontally
 Enter                 submit input
 Alt+Enter             insert a newline
 Escape                close overlay, return focus, or interrupt a task
@@ -171,6 +179,11 @@ Ctrl+C                interrupt active work; exit when idle
 Ctrl+L                force a visual redraw
 ?                     help when input is empty
 ```
+
+Typing `/` opens a left-aligned command palette directly above the input.
+Continue typing to filter commands, use `Up`/`Down` to select, and press `Tab`
+or `Enter` to complete a prefix. Pressing `Enter` on a fully typed command keeps
+the existing behavior and runs that command; `Escape` closes the palette.
 
 Pasted input uses bracketed-paste handling. Input supports cursor movement,
 selection, multiline editing, and history. One message entered while the agent

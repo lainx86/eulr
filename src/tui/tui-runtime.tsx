@@ -4,7 +4,11 @@ import type { MusicService } from "../music/music-service.js";
 import { sanitizeError } from "../auth/redaction.js";
 import { TuiApp } from "./app.js";
 import { TuiController } from "./tui-controller.js";
-import { RedactedFileLogger, TerminalLifecycle } from "./terminal-lifecycle.js";
+import {
+  captureTuiConsole,
+  RedactedFileLogger,
+  TerminalLifecycle,
+} from "./terminal-lifecycle.js";
 import type { TuiStore } from "./state/tui-store.js";
 
 export interface RunTuiOptions {
@@ -33,6 +37,7 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
   });
 
   let instance: ReturnType<typeof render> | undefined;
+  const restoreConsole = captureTuiConsole(logger);
   const lifecycle = new TerminalLifecycle({
     logger,
     onSignal: () => options.controller.requestExit(),
@@ -71,15 +76,19 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
       .catch(() => undefined);
     throw error;
   } finally {
-    instance?.unmount();
-    instance?.cleanup();
-    lifecycle.dispose();
-    await options.controller.shutdown().catch((error: unknown) => {
-      void logger.log("warn", "TUI controller shutdown failed", error);
-    });
-    await options.music.close().catch((error: unknown) => {
-      void logger.log("warn", "Music backend shutdown failed", error);
-    });
-    await lifecycle.flushLogs().catch(() => undefined);
+    try {
+      instance?.unmount();
+      instance?.cleanup();
+      lifecycle.dispose();
+      await options.controller.shutdown().catch((error: unknown) => {
+        void logger.log("warn", "TUI controller shutdown failed", error);
+      });
+      await options.music.close().catch((error: unknown) => {
+        void logger.log("warn", "Music backend shutdown failed", error);
+      });
+      await lifecycle.flushLogs().catch(() => undefined);
+    } finally {
+      restoreConsole();
+    }
   }
 }

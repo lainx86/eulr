@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import type { InputBufferSnapshot } from "../state/input-buffer.js";
 import type { TuiState } from "../types.js";
 import { colors } from "../theme/colors.js";
+import { displayText } from "../display-text.js";
 
 export function InputArea({
   state,
@@ -117,22 +118,25 @@ function EditableText({
 }): React.JSX.Element {
   const selection = snapshot.selection;
   const cursor = active ? snapshot.cursor : -1;
-  const before = snapshot.value.slice(0, selection?.start ?? cursor);
+  const before = displayText(
+    snapshot.value.slice(0, selection?.start ?? cursor),
+  );
   if (selection !== null) {
     return (
       <Text wrap="truncate-end">
         {before}
         <Text inverse>
-          {snapshot.value.slice(selection.start, selection.end) || " "}
+          {displayText(snapshot.value.slice(selection.start, selection.end)) ||
+            " "}
         </Text>
-        {snapshot.value.slice(selection.end)}
+        {displayText(snapshot.value.slice(selection.end))}
       </Text>
     );
   }
   if (cursor < 0)
     return (
       <Text color={colors.muted} wrap="truncate-end">
-        {snapshot.value || "Ask eulr anything…"}
+        {displayText(snapshot.value) || "Ask eulr anything…"}
       </Text>
     );
   return (
@@ -140,9 +144,9 @@ function EditableText({
       wrap="truncate-end"
       color={snapshot.value === "" ? colors.muted : colors.foreground}
     >
-      {snapshot.value.slice(0, cursor)}
-      <Text inverse>{snapshot.value[cursor] ?? " "}</Text>
-      {snapshot.value.slice(cursor + 1)}
+      {displayText(snapshot.value.slice(0, cursor))}
+      <Text inverse>{displayText(snapshot.value[cursor] ?? " ")}</Text>
+      {displayText(snapshot.value.slice(cursor + 1))}
     </Text>
   );
 }

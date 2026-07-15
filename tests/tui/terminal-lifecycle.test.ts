@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { getEulrPaths } from "../../src/config/data-paths.js";
 import {
+  captureTuiConsole,
   configureTuiColorEnvironment,
   RedactedFileLogger,
   TERMINAL_ESCAPE_SEQUENCES,
@@ -17,6 +18,7 @@ import {
 import type {
   ProcessEventSource,
   TerminalLogger,
+  TuiConsole,
 } from "../../src/tui/terminal-lifecycle.js";
 
 const temporaryRoots: string[] = [];
@@ -146,6 +148,35 @@ describe("TerminalLifecycle", () => {
     }).cleanup();
 
     expect(write).not.toHaveBeenCalled();
+  });
+});
+
+describe("captureTuiConsole", () => {
+  it("redirects sanitized diagnostics and restores console methods", () => {
+    const log = vi.fn();
+    const originalError = vi.fn();
+    const target: TuiConsole = {
+      debug: vi.fn(),
+      error: originalError,
+      info: vi.fn(),
+      log: vi.fn(),
+      trace: vi.fn(),
+      warn: vi.fn(),
+    };
+    const restore = captureTuiConsole({ log }, target);
+
+    target.error("Authorization: Bearer top-secret");
+    expect(originalError).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      "error",
+      "TUI console output",
+      "Authorization: [REDACTED]",
+    );
+
+    restore();
+    restore();
+    target.error("visible after restore");
+    expect(originalError).toHaveBeenCalledWith("visible after restore");
   });
 });
 

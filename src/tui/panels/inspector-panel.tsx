@@ -46,8 +46,10 @@ export function InspectorPanel({
       </Box>
       <Box
         marginTop={1}
+        width="100%"
         height={bodyHeight}
         flexDirection="column"
+        flexShrink={0}
         overflow="hidden"
       >
         {inspector.activeTab === "changes" && (
