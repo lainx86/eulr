@@ -6,6 +6,7 @@ import type { SessionEvent, SessionStatus } from "./events.js";
 import { pendingToolCalls, reconstructSession } from "./state.js";
 import type { SessionState } from "./state.js";
 import { SessionStore } from "./store.js";
+import type { ReasoningEffort } from "../providers/provider.js";
 
 const INTERRUPTED_TOOL_RESULT =
   "Tool execution was interrupted before completion and was not rerun.";
@@ -14,6 +15,7 @@ export interface CreateSessionOptions {
   cwd: string;
   provider: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   id?: string;
 }
 
@@ -36,6 +38,9 @@ export class SessionService {
       cwd,
       provider: options.provider,
       model: options.model,
+      ...(options.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: options.reasoningEffort }),
     };
     await this.store.append(id, event);
     return reconstructSession([event]);
@@ -156,6 +161,17 @@ export class SessionService {
       type: "session_model_changed",
       timestamp: this.now(),
       model,
+    });
+  }
+
+  async setReasoningEffort(
+    id: string,
+    reasoningEffort: ReasoningEffort | undefined,
+  ): Promise<void> {
+    await this.append(id, {
+      type: "session_reasoning_effort_changed",
+      timestamp: this.now(),
+      reasoningEffort: reasoningEffort ?? null,
     });
   }
 

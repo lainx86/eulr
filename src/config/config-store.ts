@@ -16,6 +16,7 @@ import {
   type MusicConfig,
 } from "./schema.js";
 import { ConfigurationError } from "../utils/errors.js";
+import type { ReasoningEffort } from "../providers/provider.js";
 
 export class ConfigStore {
   private mutationTail: Promise<void> = Promise.resolve();
@@ -76,6 +77,26 @@ export class ConfigStore {
         ...config.providers[providerId],
         defaultModel: modelId,
       };
+    });
+  }
+
+  async setModelSelection(
+    providerId: string,
+    modelId: string,
+    reasoningEffort?: ReasoningEffort,
+  ): Promise<void> {
+    await this.update((config) => {
+      const provider = {
+        ...config.providers[providerId],
+        defaultModel: modelId,
+        ...(reasoningEffort === undefined
+          ? {}
+          : { defaultReasoningEffort: reasoningEffort }),
+      };
+      if (reasoningEffort === undefined) {
+        delete provider.defaultReasoningEffort;
+      }
+      config.providers[providerId] = provider;
     });
   }
 

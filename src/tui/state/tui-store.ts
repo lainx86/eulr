@@ -1,5 +1,6 @@
 import type { TokenUsage } from "../../agent/messages.js";
 import type { SessionState } from "../../sessions/state.js";
+import type { ReasoningEffort } from "../../providers/provider.js";
 import type {
   ActivityStatus,
   ActivityItem,
@@ -31,6 +32,7 @@ const FOCUS_ORDER: FocusTarget[] = ["activity", "inspector", "input", "music"];
 export interface TuiStoreOptions {
   providerId: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   cwd: string;
   session: SessionState;
   version: string;
@@ -45,6 +47,7 @@ export class TuiStore {
     this.state = {
       providerId: options.providerId,
       model: options.model,
+      reasoningEffort: options.reasoningEffort,
       cwd: options.cwd,
       sessionId: options.session.id,
       version: options.version,
@@ -89,6 +92,7 @@ export class TuiStore {
   setRuntime(input: {
     providerId: string;
     model: string;
+    reasoningEffort?: ReasoningEffort;
     cwd: string;
     session: SessionState;
   }): void {
@@ -97,6 +101,7 @@ export class TuiStore {
       ...this.state,
       providerId: input.providerId,
       model: input.model,
+      reasoningEffort: input.reasoningEffort,
       cwd: input.cwd,
       sessionId: input.session.id,
       phase,
@@ -435,6 +440,24 @@ export class TuiStore {
           ...(model.name === undefined
             ? {}
             : { name: displayLine(model.name) }),
+          ...(model.defaultReasoningEffort === undefined
+            ? {}
+            : {
+                defaultReasoningEffort: displayLine(
+                  model.defaultReasoningEffort,
+                ),
+              }),
+          ...(model.supportedReasoningEfforts === undefined
+            ? {}
+            : {
+                supportedReasoningEfforts:
+                  model.supportedReasoningEfforts.map((option) => ({
+                    effort: displayLine(option.effort),
+                    ...(option.description === undefined
+                      ? {}
+                      : { description: displayLine(option.description) }),
+                  })),
+              }),
         })),
       },
     });
@@ -470,7 +493,12 @@ export class TuiStore {
 
   moveOverlaySelection(delta: number): void {
     const overlay = this.state.overlay;
-    if (overlay?.type !== "models" && overlay?.type !== "sessions") return;
+    if (
+      overlay?.type !== "models" &&
+      overlay?.type !== "sessions" &&
+      overlay?.type !== "reasoning"
+    )
+      return;
     if (overlay.items.length === 0) return;
     const selectedIndex =
       (overlay.selectedIndex + delta + overlay.items.length) %

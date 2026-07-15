@@ -311,9 +311,9 @@ describe("OpenAICodexProvider", () => {
       },
     ];
 
-    await expect(
-      collect(provider.stream(request(messages), {})),
-    ).resolves.toEqual([
+    const modelRequest = request(messages);
+    modelRequest.reasoningEffort = "high";
+    await expect(collect(provider.stream(modelRequest, {}))).resolves.toEqual([
       { type: "text_delta", text: "Working" },
       { type: "reasoning_delta", text: "Inspecting" },
       { type: "tool_call_start", callId: "call-1", toolName: "read" },
@@ -338,6 +338,7 @@ describe("OpenAICodexProvider", () => {
     expect(sentHeaders?.get("session-id")).toBe("session-1");
     expect(sentBody).toMatchObject({
       model: "gpt-test",
+      reasoning: { effort: "high", summary: "auto" },
       instructions: "Work carefully.",
       stream: true,
       store: false,
@@ -405,6 +406,12 @@ describe("OpenAICodexProvider", () => {
                 display_name: "First",
                 description: "Preferred",
                 context_window: 272000,
+                default_reasoning_level: "medium",
+                supported_reasoning_levels: [
+                  { effort: "low", description: "Fast" },
+                  { effort: "medium", description: "Balanced" },
+                  { effort: "high", description: "Deep" },
+                ],
                 visibility: "list",
                 minimal_client_version: "0.1.0",
                 priority: 1,
@@ -421,10 +428,33 @@ describe("OpenAICodexProvider", () => {
         name: "First",
         description: "Preferred",
         contextWindow: 272000,
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { effort: "low", description: "Fast" },
+          { effort: "medium", description: "Balanced" },
+          { effort: "high", description: "Deep" },
+        ],
       },
       { id: "second", name: "Second" },
     ]);
     expect(requestedUrl).toContain("/models?client_version=1.2.3");
+  });
+
+  it("maps the Codex Ultra UI preset to Max on the Responses wire", async () => {
+    let sentBody: Record<string, unknown> | undefined;
+    const provider = new OpenAICodexProvider({
+      auth: fakeAuth(),
+      fetch: (async (_input, init) => {
+        sentBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return completedResponse();
+      }) as typeof fetch,
+    });
+    const modelRequest = request();
+    modelRequest.reasoningEffort = "ultra";
+
+    await collect(provider.stream(modelRequest, {}));
+
+    expect(sentBody?.reasoning).toEqual({ effort: "max", summary: "auto" });
   });
 
   it("uses the pinned Codex protocol compatibility version, not the eulr version", async () => {

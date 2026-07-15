@@ -6,6 +6,11 @@ import type { PermissionChoice, TuiPermissionBroker } from "./event-bridge.js";
 import type { TuiStore } from "./state/tui-store.js";
 import { redactText, sanitizeError } from "../auth/redaction.js";
 import { ConfigurationError, isAbortError } from "../utils/errors.js";
+import type { ReasoningEffort } from "../providers/provider.js";
+import {
+  reasoningEffortLabel,
+  reasoningOptionsForModel,
+} from "../providers/reasoning.js";
 
 export interface TuiMusicController {
   getState(): MusicPlaybackState;
@@ -24,7 +29,11 @@ export interface TuiControllerActions {
   logout(providerId: string): Promise<boolean>;
   newSession(runtime: InteractiveRuntime): Promise<InteractiveRuntime>;
   resume(sessionId: string): Promise<InteractiveRuntime>;
-  saveModel(providerId: string, modelId: string): Promise<void>;
+  saveModel(
+    providerId: string,
+    modelId: string,
+    reasoningEffort?: ReasoningEffort,
+  ): Promise<void>;
 }
 
 export interface TuiControllerOptions {
@@ -143,12 +152,23 @@ export class TuiController {
 
   async confirmOverlaySelection(): Promise<void> {
     const overlay = this.store.getSnapshot().overlay;
-    if (overlay?.type !== "models" && overlay?.type !== "sessions") return;
+    if (
+      overlay?.type !== "models" &&
+      overlay?.type !== "sessions" &&
+      overlay?.type !== "reasoning"
+    )
+      return;
     const selected = overlay.items[overlay.selectedIndex];
     if (selected === undefined) return;
-    this.store.setOverlay(undefined);
-    if (overlay.type === "models") await this.selectModel(selected.id);
-    else await this.resume(selected.id);
+    if (overlay.type === "models") {
+      await this.showReasoning(overlay.items[overlay.selectedIndex]?.id ?? "");
+    } else if (overlay.type === "reasoning") {
+      this.store.setOverlay(undefined);
+      await this.selectModel(overlay.modelId, selected.id);
+    } else {
+      this.store.setOverlay(undefined);
+      await this.resume(selected.id);
+    }
   }
 
   closeOverlay(): void {
@@ -261,7 +281,7 @@ export class TuiController {
         }
         case "model":
           if (command.model !== undefined)
-            await this.selectModel(command.model);
+            await this.showReasoning(command.model);
           else await this.showModels();
           return;
         case "new":
@@ -291,7 +311,7 @@ export class TuiController {
         case "status": {
           const state = this.runtime.agent.session;
           this.store.setStatus(
-            `${this.runtime.providerId} · ${this.runtime.model} · ${state.id} · ${state.usage.inputTokens} in / ${state.usage.outputTokens} out`,
+            `${this.runtime.providerId} · ${this.runtime.model}${this.runtime.reasoningEffort === undefined ? "" : ` · ${this.runtime.reasoningEffort}`} · ${state.id} · ${state.usage.inputTokens} in / ${state.usage.outputTokens} out`,
           );
           return;
         }
@@ -347,14 +367,79 @@ export class TuiController {
     });
   }
 
-  private async selectModel(model: string): Promise<void> {
+  private async showReasoning(modelId: string): Promise<void> {
+    if (modelId === "") return;
+    if (this.runtime.providerId !== "openai-codex") {
+      this.store.setOverlay(undefined);
+      await this.selectModel(modelId);
+      return;
+    }
+
+    let model = this.store
+      .getSnapshot()
+      .modelCatalog.models.find((candidate) => candidate.id === modelId);
+    if (model === undefined || model.supportedReasoningEfforts === undefined) {
+      await this.loadModelCatalog();
+      model = this.store
+        .getSnapshot()
+        .modelCatalog.models.find((candidate) => candidate.id === modelId);
+    }
+    const choices = model === undefined ? [] : reasoningOptionsForModel(model);
+    if (choices.length === 0) {
+      this.store.setOverlay(undefined);
+      await this.selectModel(modelId);
+      return;
+    }
+
+    const preferred =
+      modelId === this.runtime.model
+        ? this.runtime.reasoningEffort
+        : model?.defaultReasoningEffort;
+    this.store.setOverlay({
+      type: "reasoning",
+      title: `Select reasoning level · ${modelId}`,
+      modelId,
+      items: choices.map((choice) => ({
+        id: choice.effort,
+        label: `${reasoningEffortLabel(choice.effort)}${choice.effort === model?.defaultReasoningEffort ? " (default)" : ""}`,
+        ...(choice.description === undefined
+          ? {}
+          : { detail: choice.description }),
+      })),
+      selectedIndex: Math.max(
+        0,
+        choices.findIndex((choice) => choice.effort === preferred),
+      ),
+    });
+  }
+
+  private async selectModel(
+    model: string,
+    reasoningEffort?: ReasoningEffort,
+  ): Promise<void> {
     this.runtime.loop.setModel(model);
+    this.runtime.loop.setReasoningEffort(reasoningEffort);
     await this.runtime.sessions.setModel(this.runtime.session.id, model);
-    await this.actions.saveModel(this.runtime.providerId, model);
+    await this.runtime.sessions.setReasoningEffort(
+      this.runtime.session.id,
+      reasoningEffort,
+    );
+    if (reasoningEffort === undefined)
+      await this.actions.saveModel(this.runtime.providerId, model);
+    else
+      await this.actions.saveModel(
+        this.runtime.providerId,
+        model,
+        reasoningEffort,
+      );
     this.runtime.model = model;
+    if (reasoningEffort === undefined) delete this.runtime.reasoningEffort;
+    else this.runtime.reasoningEffort = reasoningEffort;
     this.runtime.session = await this.runtime.agent.refresh();
     this.store.setRuntime(this.runtime);
-    this.store.setStatus(`Model: ${model}`);
+    this.store.setStatus(
+      `Model: ${model}${reasoningEffort === undefined ? "" : ` · reasoning ${reasoningEffort}`}`,
+    );
   }
 
   private async resume(sessionId: string): Promise<void> {

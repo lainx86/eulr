@@ -5,6 +5,19 @@ export interface ModelInfo {
   name?: string;
   contextWindow?: number;
   description?: string;
+  defaultReasoningEffort?: ReasoningEffort;
+  supportedReasoningEfforts?: ReasoningEffortInfo[];
+}
+
+/**
+ * Codex deliberately accepts model-defined effort strings so a catalog can
+ * introduce a new level without requiring an eulr release first.
+ */
+export type ReasoningEffort = string;
+
+export interface ReasoningEffortInfo {
+  effort: ReasoningEffort;
+  description?: string;
 }
 
 export interface ModelToolDefinition {
@@ -15,6 +28,7 @@ export interface ModelToolDefinition {
 
 export interface ModelRequest {
   model: string;
+  reasoningEffort?: ReasoningEffort;
   systemPrompt: string;
   messages: AgentMessage[];
   tools: ModelToolDefinition[];

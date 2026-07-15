@@ -1,9 +1,21 @@
 import type { Agent } from "../agent/agent.js";
 import type { AgentLoop } from "../agent/loop.js";
-import type { ModelProvider } from "../providers/provider.js";
+import type {
+  ModelInfo,
+  ModelProvider,
+  ReasoningEffort,
+} from "../providers/provider.js";
+import {
+  reasoningEffortLabel,
+  reasoningOptionsForModel,
+} from "../providers/reasoning.js";
 import type { SessionService } from "../sessions/session-service.js";
 import type { SessionState } from "../sessions/state.js";
-import { CancellationError, isAbortError } from "../utils/errors.js";
+import {
+  CancellationError,
+  ConfigurationError,
+  isAbortError,
+} from "../utils/errors.js";
 import { INTERACTIVE_HELP, parseInteractiveCommand } from "./commands.js";
 import type { PromptService } from "./prompts.js";
 import type { TerminalRenderer } from "./renderer.js";
@@ -12,6 +24,7 @@ export interface InteractiveRuntime {
   providerId: string;
   provider: ModelProvider;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   cwd: string;
   session: SessionState;
   sessions: SessionService;
@@ -28,7 +41,11 @@ export interface InteractiveOptions {
   logout(providerId: string): Promise<boolean>;
   newSession(runtime: InteractiveRuntime): Promise<InteractiveRuntime>;
   resume(sessionId: string): Promise<InteractiveRuntime>;
-  saveModel(providerId: string, modelId: string): Promise<void>;
+  saveModel(
+    providerId: string,
+    modelId: string,
+    reasoningEffort?: ReasoningEffort,
+  ): Promise<void>;
 }
 
 export class CancellationCoordinator {
@@ -162,15 +179,39 @@ export async function runInteractive(
             if (command.model === undefined) {
               await showModels(options.renderer, runtime);
             } else {
+              const modelInfo = await findModelInfo(runtime, command.model);
+              const reasoningEffort = await chooseReasoningEffort(
+                options,
+                runtime,
+                command.model,
+                modelInfo,
+              );
               runtime.loop.setModel(command.model);
+              runtime.loop.setReasoningEffort(reasoningEffort);
               await runtime.sessions.setModel(
                 runtime.session.id,
                 command.model,
               );
-              await options.saveModel(runtime.providerId, command.model);
+              await runtime.sessions.setReasoningEffort(
+                runtime.session.id,
+                reasoningEffort,
+              );
+              if (reasoningEffort === undefined)
+                await options.saveModel(runtime.providerId, command.model);
+              else
+                await options.saveModel(
+                  runtime.providerId,
+                  command.model,
+                  reasoningEffort,
+                );
               runtime.model = command.model;
+              if (reasoningEffort === undefined)
+                delete runtime.reasoningEffort;
+              else runtime.reasoningEffort = reasoningEffort;
               runtime.session = await runtime.agent.refresh();
-              options.renderer.line(`Model: ${command.model}`);
+              options.renderer.line(
+                `Model: ${command.model}${reasoningEffort === undefined ? "" : ` · reasoning ${reasoningEffort}`}`,
+              );
             }
             break;
           case "new":
@@ -293,10 +334,59 @@ function showStatus(
   const state = runtime.agent.session;
   renderer.line(`provider: ${runtime.providerId}`);
   renderer.line(`model: ${runtime.model}`);
+  renderer.line(`reasoning: ${runtime.reasoningEffort ?? "provider default"}`);
   renderer.line(`cwd: ${runtime.cwd}`);
   renderer.line(`session: ${state.id} (${state.status})`);
   renderer.line(`usage: ${renderer.renderUsage(state.usage)}`);
   renderer.line(
     `context: ${state.messages.length - state.compactedMessageCount} messages, ${JSON.stringify(state.messages.slice(state.compactedMessageCount)).length} chars`,
   );
+}
+
+async function findModelInfo(
+  runtime: InteractiveRuntime,
+  modelId: string,
+): Promise<ModelInfo | undefined> {
+  if (runtime.providerId !== "openai-codex") return undefined;
+  return (await runtime.provider.listModels()).find(
+    (model) => model.id === modelId,
+  );
+}
+
+async function chooseReasoningEffort(
+  options: InteractiveOptions,
+  runtime: InteractiveRuntime,
+  modelId: string,
+  model: ModelInfo | undefined,
+): Promise<ReasoningEffort | undefined> {
+  if (runtime.providerId !== "openai-codex" || model === undefined) {
+    return undefined;
+  }
+  const choices = reasoningOptionsForModel(model);
+  if (choices.length === 0) return undefined;
+
+  options.renderer.line(`Reasoning level for ${modelId}:`);
+  choices.forEach((choice, index) => {
+    options.renderer.line(
+      `${index + 1}. ${reasoningEffortLabel(choice.effort)}${choice.effort === model.defaultReasoningEffort ? " (default)" : ""}${choice.description ? ` - ${choice.description}` : ""}`,
+    );
+  });
+  const answer = (
+    await options.cancellation.ask(
+      options.prompts,
+      `Select [1-${choices.length}]: `,
+    )
+  )
+    .trim()
+    .toLowerCase();
+  const numeric = Number(answer);
+  const selected = Number.isInteger(numeric)
+    ? choices[numeric - 1]
+    : choices.find((choice) => choice.effort.toLowerCase() === answer);
+  if (selected === undefined) {
+    throw new ConfigurationError(
+      `Invalid reasoning level for ${modelId}. Choose one of: ${choices.map((choice) => choice.effort).join(", ")}`,
+    );
+  }
+  return selected.effort;
 }

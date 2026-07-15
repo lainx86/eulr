@@ -124,6 +124,10 @@ and function outputs. Function definitions are top-level
 `{ type, name, description, strict, parameters }` objects, not the nested Chat
 Completions tool shape. Requests set `store=false`, `stream=true`,
 `tool_choice=auto`, and include encrypted reasoning content when available.
+When selected, reasoning is sent as `{ "reasoning": { "effort": "...",
+"summary": "auto" } }`. The upstream client treats Ultra as a local advanced
+preset and maps it to Max for the inference request; eulr uses the same wire
+mapping.
 
 The adapter normalizes text, reasoning status, function calls, token usage, and
 completion into provider-independent `ModelEvent` values. Opaque encrypted
@@ -145,6 +149,14 @@ memory; a later refresh failure keeps that snapshot and emits a sanitized
 warning. With no snapshot, an explicitly configured model remains selectable
 after a provider-level catalog failure and is accompanied by the same warning.
 Authentication and account-selection failures remain errors.
+
+Reasoning capabilities use the upstream catalog fields
+`default_reasoning_level` and `supported_reasoning_levels`, whose entries contain
+an `effort` and description. eulr carries those values into its provider-neutral
+model metadata and builds the model-selection reasoning picker from the active
+catalog instead of assigning one global effort list to every model. The selected
+effort is stored separately from the eulr application version and from Codex's
+protocol compatibility version.
 
 The model list bundled in Codex source is only an offline fallback for the
 official client, not a statement of account entitlement, so eulr does not

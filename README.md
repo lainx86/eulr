@@ -202,20 +202,25 @@ activity history and bottom dock remain visible throughout.
 /login                authenticate and start a session for that provider
 /logout               remove the active provider credential
 /model                show available models and the active model
-/model <model-id>     select and persist a model default
+/model <model-id>     select a model, then choose its reasoning level
 /new                  start a new session
 /resume [session-id]  resume a saved session or open the selector
 /sessions             open the recent-session selector
 /music <command>      control local music playback
 /compact              summarize older context now
-/status               show provider, model, cwd, session, usage, context size
+/status               show provider, model, reasoning, session, and usage
 /clear                clear the terminal without deleting history
 /exit                 flush the session and exit
 ```
 
-Model and session lists open selectable TUI overlays. Authentication temporarily
-suspends the alternate screen so browser/API-key prompts can safely own the
-terminal, then redraws the TUI.
+Model and session lists open selectable TUI overlays. Selecting an OpenAI Codex
+model opens a second, catalog-driven reasoning picker. It shows only the levels
+advertised for that model (for example low, medium, high, xhigh, and, where
+available, max or ultra), marks the provider default, and persists the model and
+effort together. Codex Ultra is a client preset whose inference request uses Max
+effort, matching the pinned official Codex implementation. Authentication
+temporarily suspends the alternate screen so browser/API-key prompts can safely
+own the terminal, then redraws the TUI.
 
 `Ctrl+C` cancels the active provider stream or command, stops its process group,
 marks the run cancelled, flushes the session, and restores the retained input.
@@ -290,9 +295,9 @@ including when a harmless-looking symlink points to one.
 ## Sessions and context
 
 Sessions are append-only JSONL files under `~/.eulr/sessions/`. Events include
-messages, tool execution, usage, compaction, and status. Resume validates every
-complete event, tolerates a partial crash tail, reconstructs state, and does not
-re-run old tool calls.
+messages, tool execution, model and reasoning selection, usage, compaction, and
+status. Resume validates every complete event, tolerates a partial crash tail,
+reconstructs state, and does not re-run old tool calls.
 
 The context manager preserves the system prompt, root `AGENTS.md` instruction,
 summary, recent turns, and complete tool-call/result pairs. It reloads a changed

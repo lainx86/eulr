@@ -53,6 +53,16 @@ describe("AgentLoop", () => {
     });
   });
 
+  it("passes the selected reasoning effort to every model turn", async () => {
+    const harness = await createHarness(root, [finalResponse("Done.")], {
+      reasoningEffort: "xhigh",
+    });
+
+    await harness.loop.runTask(harness.session, "Think deeply");
+
+    expect(harness.provider.requests[0]?.reasoningEffort).toBe("xhigh");
+  });
+
   it("runs one tool and sends its result back to the model", async () => {
     const execute = vi.fn(async () => ({ content: "tool output" }));
     const harness = await createHarness(
@@ -464,6 +474,7 @@ async function createHarness(
     tools?: ToolRegistry;
     permissions?: PermissionChecker;
     maxTurns?: number;
+    reasoningEffort?: string;
   } = {},
 ): Promise<{
   loop: AgentLoop;
@@ -486,6 +497,9 @@ async function createHarness(
   const loop = new AgentLoop({
     provider,
     model: "fake-model",
+    ...(options.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: options.reasoningEffort }),
     tools: options.tools ?? new ToolRegistry(),
     permissions:
       options.permissions ??

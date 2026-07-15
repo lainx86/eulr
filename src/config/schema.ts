@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const providerConfigSchema = z.object({
   defaultModel: z.string().min(1).optional(),
+  defaultReasoningEffort: z.string().min(1).optional(),
   baseUrl: z.url().optional(),
 });
 

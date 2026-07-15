@@ -7,6 +7,7 @@ import type {
   MusicPlaybackState,
 } from "../../src/music/types.js";
 import type { SessionState } from "../../src/sessions/state.js";
+import type { ModelInfo } from "../../src/providers/provider.js";
 import { TuiPermissionBroker } from "../../src/tui/event-bridge.js";
 import { TuiStore } from "../../src/tui/state/tui-store.js";
 import {
@@ -239,6 +240,99 @@ describe("TuiController", () => {
     await fixture.controller.shutdown();
   });
 
+  it("opens a capability-driven reasoning picker after selecting a Codex model", async () => {
+    const fixture = createFixture({
+      providerId: "openai-codex",
+      model: "gpt-5.4",
+    });
+    fixture.runtime.models.splice(
+      0,
+      fixture.runtime.models.length,
+      {
+        id: "gpt-5.4",
+        name: "GPT-5.4",
+        defaultReasoningEffort: "medium",
+        supportedReasoningEfforts: [
+          { effort: "low" },
+          { effort: "medium" },
+          { effort: "high" },
+          { effort: "xhigh" },
+        ],
+      },
+      {
+        id: "gpt-5.6-sol",
+        name: "GPT-5.6-Sol",
+        defaultReasoningEffort: "high",
+        supportedReasoningEfforts: [
+          { effort: "low", description: "Fast" },
+          { effort: "medium", description: "Balanced" },
+          { effort: "high", description: "Deep" },
+          { effort: "xhigh", description: "Extra deep" },
+          { effort: "max", description: "Higher usage" },
+          { effort: "ultra", description: "Highest usage" },
+        ],
+      },
+    );
+
+    fixture.controller.submit("/model");
+    await vi.waitFor(() =>
+      expect(fixture.store.getSnapshot().overlay?.type).toBe("models"),
+    );
+    fixture.store.moveOverlaySelection(1);
+    await fixture.controller.confirmOverlaySelection();
+
+    const reasoningOverlay = fixture.store.getSnapshot().overlay;
+    expect(reasoningOverlay).toMatchObject({
+      type: "reasoning",
+      modelId: "gpt-5.6-sol",
+      selectedIndex: 2,
+    });
+    if (reasoningOverlay?.type !== "reasoning") throw new Error("expected");
+    expect(reasoningOverlay.items.map((item) => item.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+
+    fixture.store.moveOverlaySelection(2);
+    await fixture.controller.confirmOverlaySelection();
+
+    expect(fixture.runtime.setLoopModel).toHaveBeenCalledWith("gpt-5.6-sol");
+    expect(fixture.runtime.setLoopReasoningEffort).toHaveBeenCalledWith("max");
+    expect(fixture.runtime.setSessionReasoningEffort).toHaveBeenCalledWith(
+      "session-1",
+      "max",
+    );
+    expect(fixture.actions.saveModel).toHaveBeenCalledWith(
+      "openai-codex",
+      "gpt-5.6-sol",
+      "max",
+    );
+    expect(fixture.store.getSnapshot()).toMatchObject({
+      model: "gpt-5.6-sol",
+      reasoningEffort: "max",
+      statusMessage: "Model: gpt-5.6-sol · reasoning max",
+    });
+
+    fixture.controller.submit("/model gpt-5.4");
+    await vi.waitFor(() =>
+      expect(fixture.store.getSnapshot().overlay?.type).toBe("reasoning"),
+    );
+    const standardOverlay = fixture.store.getSnapshot().overlay;
+    if (standardOverlay?.type !== "reasoning") throw new Error("expected");
+    expect(standardOverlay.items.map((item) => item.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+
+    await fixture.controller.shutdown();
+  });
+
   it("loads the provider catalog and preserves it across a sanitized refresh failure", async () => {
     const fixture = createFixture({ model: "model-a" });
     fixture.runtime.models.splice(
@@ -343,10 +437,14 @@ describe("TuiController", () => {
 
 interface FixtureOptions {
   model?: string;
+  providerId?: string;
 }
 
 function createFixture(options: FixtureOptions = {}) {
-  const runtime = createRuntimeHarness({ model: options.model });
+  const runtime = createRuntimeHarness({
+    model: options.model,
+    providerId: options.providerId,
+  });
   const store = new TuiStore({
     providerId: runtime.runtime.providerId,
     model: runtime.runtime.model,
@@ -393,6 +491,7 @@ type RunHandler = (task: string, signal: AbortSignal) => Promise<void>;
 
 interface RuntimeHarnessOptions {
   model?: string;
+  providerId?: string;
   session?: SessionState;
 }
 
@@ -401,7 +500,8 @@ function createRuntimeHarness(options: RuntimeHarnessOptions = {}) {
   let session = options.session ?? sessionState("session-1", model);
   let runHandler: RunHandler = async () => undefined;
   let activeModel = model;
-  const models = [{ id: model, name: "Fake model" }];
+  let activeReasoningEffort = options.session?.reasoningEffort;
+  const models: ModelInfo[] = [{ id: model, name: "Fake model" }];
   const listedSessions = [session];
 
   const run = vi.fn(
@@ -418,6 +518,19 @@ function createRuntimeHarness(options: RuntimeHarnessOptions = {}) {
   const setLoopModel = vi.fn((nextModel: string) => {
     activeModel = nextModel;
   });
+  const setSessionReasoningEffort = vi.fn(
+    async (_id: string, reasoningEffort: string | undefined) => {
+      if (reasoningEffort === undefined) {
+        const { reasoningEffort: _removed, ...rest } = session;
+        session = rest;
+      } else session = { ...session, reasoningEffort };
+    },
+  );
+  const setLoopReasoningEffort = vi.fn(
+    (reasoningEffort: string | undefined) => {
+      activeReasoningEffort = reasoningEffort;
+    },
+  );
   const agent = {
     get session() {
       return session;
@@ -425,7 +538,15 @@ function createRuntimeHarness(options: RuntimeHarnessOptions = {}) {
     run,
     compact: vi.fn(async () => session),
     refresh: vi.fn(async () => {
-      session = { ...session, model: activeModel };
+      const { reasoningEffort: _removed, ...rest } = session;
+      session =
+        activeReasoningEffort === undefined
+          ? { ...rest, model: activeModel }
+          : {
+              ...rest,
+              model: activeModel,
+              reasoningEffort: activeReasoningEffort,
+            };
       return session;
     }),
   };
@@ -433,22 +554,26 @@ function createRuntimeHarness(options: RuntimeHarnessOptions = {}) {
     flush,
     list: vi.fn(async () => listedSessions),
     setModel: setSessionModel,
+    setReasoningEffort: setSessionReasoningEffort,
   };
   const provider = {
-    id: "fake-provider",
+    id: options.providerId ?? "fake-provider",
     listModels: vi.fn(async () => models),
     async *stream() {
       yield { type: "done" as const, finishReason: "stop" };
     },
   };
   const runtime = {
-    providerId: "fake-provider",
+    providerId: options.providerId ?? "fake-provider",
     provider,
     model,
     cwd: "/workspace",
     session,
     sessions,
-    loop: { setModel: setLoopModel },
+    loop: {
+      setModel: setLoopModel,
+      setReasoningEffort: setLoopReasoningEffort,
+    },
     agent,
   } as unknown as InteractiveRuntime;
 
@@ -461,10 +586,12 @@ function createRuntimeHarness(options: RuntimeHarnessOptions = {}) {
     run,
     runtime,
     setLoopModel,
+    setLoopReasoningEffort,
     setRunHandler(handler: RunHandler) {
       runHandler = handler;
     },
     setSessionModel,
+    setSessionReasoningEffort,
   };
 }
 

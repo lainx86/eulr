@@ -1,4 +1,7 @@
-import type { ModelProvider } from "../providers/provider.js";
+import type {
+  ModelProvider,
+  ReasoningEffort,
+} from "../providers/provider.js";
 import type { SessionService } from "../sessions/session-service.js";
 import type { SessionState } from "../sessions/state.js";
 import { CancellationError, ProviderError } from "../utils/errors.js";
@@ -23,6 +26,7 @@ Preserve command exit status, test failures, uncertainty, permission denials, an
 export interface CompactContextOptions {
   provider: ModelProvider;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   session: SessionState;
   sessions: SessionService;
   context: ContextManager;
@@ -64,6 +68,9 @@ export async function compactContext(
     for await (const event of options.provider.stream(
       {
         model: options.model,
+        ...(options.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: options.reasoningEffort }),
         systemPrompt: COMPACTION_SYSTEM_PROMPT,
         messages: [requestMessage],
         tools: [],

@@ -195,7 +195,10 @@ function CompactContent({ state }: { state: TuiState }): React.JSX.Element {
         ))}
       </Box>
       <Text color={colors.muted} wrap="truncate-end">
-        model · {state.model} · {catalogSummary(state)}
+        model · {state.model}
+        {state.reasoningEffort === undefined
+          ? ""
+          : ` · reasoning ${state.reasoningEffort}`} · {catalogSummary(state)}
       </Text>
       <Text color={colors.muted} wrap="truncate-middle">
         workspace · {state.cwd}

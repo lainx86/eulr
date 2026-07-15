@@ -66,6 +66,7 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     cwd: z.string(),
     provider: z.string(),
     model: z.string(),
+    reasoningEffort: z.string().min(1).optional(),
   }),
   z.object({
     ...baseEvent,
@@ -107,6 +108,11 @@ export const sessionEventSchema = z.discriminatedUnion("type", [
     ...baseEvent,
     type: z.literal("session_model_changed"),
     model: z.string(),
+  }),
+  z.object({
+    ...baseEvent,
+    type: z.literal("session_reasoning_effort_changed"),
+    reasoningEffort: z.string().min(1).nullable(),
   }),
 ]);
 

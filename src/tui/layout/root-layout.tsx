@@ -99,6 +99,9 @@ export function RootLayout({
               >
                 <Text color={colors.muted} wrap="truncate-middle">
                   {state.providerId} · {state.model}
+                  {state.reasoningEffort === undefined
+                    ? ""
+                    : ` · ${state.reasoningEffort}`}
                 </Text>
               </Box>
             )}

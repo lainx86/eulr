@@ -308,13 +308,16 @@ function runtimeFixture(
   };
   const flush = vi.fn(async () => undefined);
   const sessionSetModel = vi.fn(async () => undefined);
+  const sessionSetReasoningEffort = vi.fn(async () => undefined);
   const sessions = {
     flush,
     setModel: sessionSetModel,
+    setReasoningEffort: sessionSetReasoningEffort,
     list: vi.fn(async () => []),
   } as unknown as SessionService;
   const setModel = vi.fn();
-  const loop = { setModel } as unknown as AgentLoop;
+  const setReasoningEffort = vi.fn();
+  const loop = { setModel, setReasoningEffort } as unknown as AgentLoop;
   const provider: ModelProvider = {
     id: providerId,
     listModels: vi.fn(async () => options.models ?? []),

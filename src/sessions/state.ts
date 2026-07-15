@@ -1,6 +1,7 @@
 import { addUsage, emptyUsage } from "../agent/messages.js";
 import type { AgentMessage, TokenUsage } from "../agent/messages.js";
 import type { SessionEvent, SessionStatus } from "./events.js";
+import type { ReasoningEffort } from "../providers/provider.js";
 
 export interface ToolExecutionState {
   callId: string;
@@ -19,6 +20,7 @@ export interface SessionState {
   cwd: string;
   provider: string;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   status: SessionStatus;
   messages: AgentMessage[];
   toolExecutions: ToolExecutionState[];
@@ -42,6 +44,9 @@ export function reconstructSession(
     cwd: created.cwd,
     provider: created.provider,
     model: created.model,
+    ...(created.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: created.reasoningEffort }),
     status: "active",
     messages: [],
     toolExecutions: [],
@@ -96,6 +101,10 @@ export function reconstructSession(
         break;
       case "session_model_changed":
         state.model = event.model;
+        break;
+      case "session_reasoning_effort_changed":
+        if (event.reasoningEffort === null) delete state.reasoningEffort;
+        else state.reasoningEffort = event.reasoningEffort;
         break;
     }
   }

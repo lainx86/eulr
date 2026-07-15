@@ -44,7 +44,7 @@ export const INTERACTIVE_COMMANDS: readonly InteractiveCommandDefinition[] = [
   {
     command: "/model",
     usage: "/model [model-id]",
-    description: "Show or select the model",
+    description: "Select the model and reasoning level",
     completion: "/model ",
   },
   {

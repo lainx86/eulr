@@ -1,5 +1,9 @@
 import type { PermissionChecker } from "../permissions/types.js";
-import type { ModelEvent, ModelProvider } from "../providers/provider.js";
+import type {
+  ModelEvent,
+  ModelProvider,
+  ReasoningEffort,
+} from "../providers/provider.js";
 import type { SessionService } from "../sessions/session-service.js";
 import type { SessionState } from "../sessions/state.js";
 import type { ToolRegistry } from "../tools/registry.js";
@@ -60,6 +64,7 @@ interface CollectedResponse {
 export interface AgentLoopOptions {
   provider: ModelProvider;
   model: string;
+  reasoningEffort?: ReasoningEffort;
   tools: ToolRegistry;
   permissions: PermissionChecker;
   sessions: SessionService;
@@ -83,6 +88,7 @@ export interface AgentRunResult {
 export class AgentLoop {
   private readonly provider: ModelProvider;
   private model: string;
+  private reasoningEffort: ReasoningEffort | undefined;
   private readonly tools: ToolRegistry;
   private readonly permissions: PermissionChecker;
   private readonly sessions: SessionService;
@@ -98,6 +104,7 @@ export class AgentLoop {
   constructor(options: AgentLoopOptions) {
     this.provider = options.provider;
     this.model = options.model;
+    this.reasoningEffort = options.reasoningEffort;
     this.tools = options.tools;
     this.permissions = options.permissions;
     this.sessions = options.sessions;
@@ -109,6 +116,10 @@ export class AgentLoop {
 
   setModel(model: string): void {
     this.model = model;
+  }
+
+  setReasoningEffort(reasoningEffort: ReasoningEffort | undefined): void {
+    this.reasoningEffort = reasoningEffort;
   }
 
   async runTask(
@@ -157,6 +168,9 @@ export class AgentLoop {
           const compacted = await compactContext({
             provider: this.provider,
             model: this.model,
+            ...(this.reasoningEffort === undefined
+              ? {}
+              : { reasoningEffort: this.reasoningEffort }),
             session,
             sessions: this.sessions,
             context: this.context,
@@ -257,6 +271,9 @@ export class AgentLoop {
     await compactContext({
       provider: this.provider,
       model: this.model,
+      ...(this.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: this.reasoningEffort }),
       session,
       sessions: this.sessions,
       context: this.context,
@@ -292,6 +309,9 @@ export class AgentLoop {
       for await (const event of this.provider.stream(
         {
           model: this.model,
+          ...(this.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: this.reasoningEffort }),
           systemPrompt,
           messages: this.context.messagesForRequest(session),
           tools: this.tools.definitions(),

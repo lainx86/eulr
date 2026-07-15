@@ -6,6 +6,7 @@ import type {
   ModelRequest,
   ModelToolDefinition,
 } from "../provider.js";
+import { codexWireReasoningEffort } from "../reasoning.js";
 
 export interface ResponsesFunctionTool {
   type: "function";
@@ -19,6 +20,10 @@ export type ResponsesInputItem = Record<string, unknown>;
 
 export interface ResponsesRequestBody {
   model: string;
+  reasoning?: {
+    effort: string;
+    summary: "auto";
+  };
   instructions?: string;
   input: ResponsesInputItem[];
   tools?: ResponsesFunctionTool[];
@@ -35,6 +40,14 @@ export function buildResponsesRequest(
 ): ResponsesRequestBody {
   return {
     model: request.model,
+    ...(request.reasoningEffort === undefined
+      ? {}
+      : {
+          reasoning: {
+            effort: codexWireReasoningEffort(request.reasoningEffort),
+            summary: "auto" as const,
+          },
+        }),
     ...(request.systemPrompt.length > 0
       ? { instructions: request.systemPrompt }
       : {}),

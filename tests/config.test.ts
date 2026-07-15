@@ -128,6 +128,27 @@ describe("configuration", () => {
     });
   });
 
+  it("persists a model and its reasoning effort as one provider selection", async () => {
+    const root = await temporaryRoot();
+    const store = new ConfigStore(join(root, "config.json"));
+
+    await store.setModelSelection("openai-codex", "gpt-5.6-sol", "max");
+
+    expect(await store.load()).toEqual({
+      providers: {
+        "openai-codex": {
+          defaultModel: "gpt-5.6-sol",
+          defaultReasoningEffort: "max",
+        },
+      },
+    });
+
+    await store.setModelSelection("openai-compatible", "custom-model");
+    expect((await store.load()).providers["openai-compatible"]).toEqual({
+      defaultModel: "custom-model",
+    });
+  });
+
   it("validates and persists music settings", async () => {
     const root = await temporaryRoot();
     const path = join(root, "config.json");

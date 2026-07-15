@@ -39,12 +39,13 @@ describe("SessionService", () => {
     expect(resumed.cwd).toBe(root);
   });
 
-  it("persists model and compaction state", async () => {
+  it("persists model, reasoning effort, and compaction state", async () => {
     const session = await service.create({
       id: "compact-test",
       cwd: root,
       provider: "fake",
       model: "one",
+      reasoningEffort: "medium",
     });
     await service.addMessage(session.id, {
       role: "user",
@@ -53,11 +54,16 @@ describe("SessionService", () => {
     });
     await service.compact(session.id, "User goal\nFix it", 1);
     await service.setModel(session.id, "two");
+    await service.setReasoningEffort(session.id, "high");
 
     const loaded = await service.load(session.id);
     expect(loaded.contextSummary).toContain("Fix it");
     expect(loaded.compactedMessageCount).toBe(1);
     expect(loaded.model).toBe("two");
+    expect(loaded.reasoningEffort).toBe("high");
+
+    await service.setReasoningEffort(session.id, undefined);
+    expect((await service.load(session.id)).reasoningEffort).toBeUndefined();
   });
 
   it("does not rerun an old pending tool when resuming", async () => {

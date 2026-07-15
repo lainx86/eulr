@@ -34,6 +34,11 @@ export const CODEX_PROTOCOL_COMPATIBILITY_VERSION = "0.144.4";
 const RESPONSE_SUMMARY_LIMIT = 512;
 const SEMANTIC_VERSION_PATTERN =
   /^(\d+)\.(\d+)\.(\d+)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+const reasoningEffortSchema = z.string().min(1);
+const reasoningEffortPresetSchema = z.object({
+  effort: reasoningEffortSchema,
+  description: z.string().optional(),
+});
 
 export interface ChatGPTCredentialSource {
   getValidChatGPTCredential(signal?: AbortSignal): Promise<ChatGPTCredential>;
@@ -60,6 +65,10 @@ const modelSchema = z.object({
   display_name: z.string().optional(),
   description: z.string().optional(),
   context_window: z.number().int().positive().optional(),
+  default_reasoning_level: reasoningEffortSchema.optional(),
+  supported_reasoning_levels: z
+    .array(reasoningEffortPresetSchema)
+    .default([]),
   visibility: z.enum(["list", "hide", "none"]),
   minimal_client_version: z.union([
     z.string().regex(SEMANTIC_VERSION_PATTERN),
@@ -133,6 +142,20 @@ export class OpenAICodexProvider implements ModelProvider {
           ...(model.context_window
             ? { contextWindow: model.context_window }
             : {}),
+          ...(model.default_reasoning_level === undefined
+            ? {}
+            : { defaultReasoningEffort: model.default_reasoning_level }),
+          ...(model.supported_reasoning_levels.length === 0
+            ? {}
+            : {
+                supportedReasoningEfforts:
+                  model.supported_reasoning_levels.map((option) => ({
+                    effort: option.effort,
+                    ...(option.description === undefined
+                      ? {}
+                      : { description: option.description }),
+                  })),
+              }),
         }));
       this.lastSuccessfulCatalog = cloneModelList(models);
       return cloneModelList(models);
@@ -419,7 +442,16 @@ function assertSemanticVersion(version: string, label: string): void {
 }
 
 function cloneModelList(models: readonly ModelInfo[]): ModelInfo[] {
-  return models.map((model) => ({ ...model }));
+  return models.map((model) => ({
+    ...model,
+    ...(model.supportedReasoningEfforts === undefined
+      ? {}
+      : {
+          supportedReasoningEfforts: model.supportedReasoningEfforts.map(
+            (option) => ({ ...option }),
+          ),
+        }),
+  }));
 }
 
 function abortableDelay(

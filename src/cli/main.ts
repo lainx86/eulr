@@ -25,6 +25,8 @@ import type {
 import { OpenAICodexProvider } from "../providers/openai-codex.js";
 import { OpenAICompatibleProvider } from "../providers/openai-compatible.js";
 import type { ModelInfo, ModelProvider } from "../providers/provider.js";
+import type { ReasoningEffort } from "../providers/provider.js";
+import { selectReasoningEffort } from "../providers/reasoning.js";
 import { ProviderRegistry } from "../providers/registry.js";
 import { SessionService } from "../sessions/session-service.js";
 import type { SessionState } from "../sessions/state.js";
@@ -71,6 +73,7 @@ interface AppServices {
 interface RuntimeRequest {
   providerId?: string;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
   cwd?: string;
   sessionId?: string;
   yes: boolean;
@@ -187,6 +190,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       const store = new TuiStore({
         providerId: runtime.providerId,
         model: runtime.model,
+        ...(runtime.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: runtime.reasoningEffort }),
         cwd: runtime.cwd,
         session: runtime.session,
         version: VERSION,
@@ -227,6 +233,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
               {
                 providerId: current.providerId,
                 model: current.model,
+                ...(current.reasoningEffort === undefined
+                  ? {}
+                  : { reasoningEffort: current.reasoningEffort }),
                 cwd: current.cwd,
                 yes: args.yes,
               },
@@ -235,8 +244,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             ),
           resume: (sessionId) =>
             createRuntime({ sessionId, yes: args.yes }, services, presentation),
-          saveModel: (providerId, modelId) =>
-            services.configStore.setDefaultModel(providerId, modelId),
+          saveModel: (providerId, modelId, reasoningEffort) =>
+            services.configStore.setModelSelection(
+              providerId,
+              modelId,
+              reasoningEffort,
+            ),
         },
       });
       await runTui({
@@ -306,6 +319,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           {
             providerId: current.providerId,
             model: current.model,
+            ...(current.reasoningEffort === undefined
+              ? {}
+              : { reasoningEffort: current.reasoningEffort }),
             cwd: current.cwd,
             yes: args.yes,
           },
@@ -314,8 +330,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         ),
       resume: (sessionId) =>
         createRuntime({ sessionId, yes: args.yes }, services, presentation),
-      saveModel: (providerId, modelId) =>
-        services.configStore.setDefaultModel(providerId, modelId),
+      saveModel: (providerId, modelId, reasoningEffort) =>
+        services.configStore.setModelSelection(
+          providerId,
+          modelId,
+          reasoningEffort,
+        ),
     });
     return 0;
   } catch (error) {
@@ -382,15 +402,31 @@ async function createRuntime(
     provider,
     presentation.warning,
   );
+  const preferredReasoningEffort =
+    request.reasoningEffort ??
+    resumed?.reasoningEffort ??
+    config.providers[providerId]?.defaultReasoningEffort;
+  const reasoningEffort =
+    providerId === "openai-codex"
+      ? selectReasoningEffort(info, preferredReasoningEffort)
+      : undefined;
   const cwd = resumed?.cwd ?? (await validateCwd(request.cwd ?? process.cwd()));
   const session =
     resumed === undefined
-      ? await services.sessions.create({ cwd, provider: providerId, model })
+      ? await services.sessions.create({
+          cwd,
+          provider: providerId,
+          model,
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        })
       : await services.sessions.resume(resumed.id);
   if (session.model !== model)
     await services.sessions.setModel(session.id, model);
+  if (session.reasoningEffort !== reasoningEffort) {
+    await services.sessions.setReasoningEffort(session.id, reasoningEffort);
+  }
   const activeSession =
-    session.model === model
+    session.model === model && session.reasoningEffort === reasoningEffort
       ? session
       : await services.sessions.load(session.id);
   const permissions = new PermissionManager({
@@ -400,6 +436,7 @@ async function createRuntime(
   const loop = new AgentLoop({
     provider,
     model,
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     tools: createDefaultToolRegistry(),
     permissions,
     sessions: services.sessions,
@@ -413,6 +450,7 @@ async function createRuntime(
     providerId,
     provider,
     model,
+    reasoningEffort,
     cwd,
     session: activeSession,
     sessions: services.sessions,

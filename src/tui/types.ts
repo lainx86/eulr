@@ -1,5 +1,9 @@
 import type { TokenUsage } from "../agent/messages.js";
 import type { PermissionRequest } from "../permissions/types.js";
+import type {
+  ReasoningEffort,
+  ReasoningEffortInfo,
+} from "../providers/provider.js";
 
 export type RunPhase =
   "idle" | "working" | "completed" | "failed" | "cancelled";
@@ -80,6 +84,13 @@ export type OverlayState =
       title: string;
       items: OverlayItem[];
       selectedIndex: number;
+    }
+  | {
+      type: "reasoning";
+      title: string;
+      modelId: string;
+      items: OverlayItem[];
+      selectedIndex: number;
     };
 
 export interface MusicUiState {
@@ -107,6 +118,8 @@ export interface MusicUiState {
 export interface ModelCatalogItem {
   id: string;
   name?: string;
+  defaultReasoningEffort?: ReasoningEffort;
+  supportedReasoningEfforts?: ReasoningEffortInfo[];
 }
 
 export interface ModelCatalogUiState {
@@ -124,6 +137,7 @@ export interface ScrollState {
 export interface TuiState {
   providerId: string;
   model: string;
+  reasoningEffort: ReasoningEffort | undefined;
   cwd: string;
   sessionId: string;
   version: string;
