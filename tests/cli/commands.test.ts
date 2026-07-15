@@ -17,7 +17,9 @@ describe("interactive command parsing", () => {
 
   it.each([
     ["/music play", { type: "play" }],
-    ["/music builtin", { type: "builtin" }],
+    ["/music remote", { type: "remote" }],
+    ["/music local", { type: "local" }],
+    ["/music off", { type: "off" }],
     ["/music pause", { type: "pause" }],
     ["/music toggle", { type: "toggle" }],
     ["/music next", { type: "next" }],
@@ -57,6 +59,7 @@ describe("interactive command parsing", () => {
     "/music volume -1",
     "/music volume 101",
     "/music play now",
+    "/music builtin",
     "/music unknown",
   ])("returns an actionable parse error for %s", (input) => {
     const parsed = parseInteractiveCommand(input);

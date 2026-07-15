@@ -123,6 +123,37 @@ describe("MpvBackend", () => {
     }
   });
 
+  it("waits for a remote stream to load before seeking", async () => {
+    const backend = backendWithPeer(await workspace(), "delayed-load", {
+      loadTimeoutMs: 500,
+    });
+    try {
+      await backend.initialize();
+      await backend.loadPlaylist(["https://music.example.test/track.mp3"], 0);
+      await expect(backend.seek(42)).resolves.toBeUndefined();
+      await expect(backend.getState()).resolves.toMatchObject({
+        path: "https://music.example.test/track.mp3",
+        elapsedSeconds: 42,
+      });
+    } finally {
+      await backend.close();
+    }
+  });
+
+  it("does not report an internal stream replacement as a completed track", async () => {
+    const backend = backendWithPeer(await workspace(), "normal");
+    const events: unknown[] = [];
+    backend.subscribe((event) => events.push(event));
+    try {
+      await backend.initialize();
+      await backend.loadPlaylist(["https://music.example.test/one.mp3"], 0);
+      await backend.loadPlaylist(["https://music.example.test/two.mp3"], 0);
+      expect(events).not.toContainEqual({ type: "ended" });
+    } finally {
+      await backend.close();
+    }
+  });
+
   it("normalizes a missing mpv executable as unavailable", async () => {
     const backend = new MpvBackend({
       executable: path.join(await workspace(), "definitely-missing-eulr-mpv"),
@@ -164,6 +195,7 @@ class FakeMpvSocket extends Duplex {
   private input = "";
   private outputTail: Promise<void> = Promise.resolve();
   private playlist: string[] = [];
+  private fileLoaded = true;
   private readonly properties: Record<string, unknown> = {
     path: undefined,
     "time-pos": 0,
@@ -216,24 +248,35 @@ class FakeMpvSocket extends Duplex {
     if (name === "observe_property" && typeof second === "string") {
       this.propertyEvent(second);
     } else if (name === "loadfile" && typeof first === "string") {
+      const replacingCurrent = second === "replace" && this.playlist.length > 0;
+      if (replacingCurrent) this.send({ event: "end-file", reason: "stop" });
       if (second === "replace") this.playlist = [first];
       else this.playlist.push(first);
       this.properties["playlist-count"] = this.playlist.length;
       if ((this.properties["playlist-pos"] as number) < 0)
         this.properties["playlist-pos"] = 0;
       this.updateCurrentTrack();
+      if (second === "replace") this.announceFileLoaded();
     } else if (name === "set_property" && typeof first === "string") {
       this.properties[first] = second;
       if (first === "playlist-pos" && typeof second === "number") {
         this.updateCurrentTrack();
         this.propertyEvent("path");
         this.propertyEvent("metadata");
+        this.announceFileLoaded();
       }
       this.propertyEvent(first);
     } else if (name === "cycle" && first === "pause") {
       this.properties.pause = !this.properties.pause;
       this.propertyEvent("pause");
     } else if (name === "seek" && typeof first === "number") {
+      if (!this.fileLoaded) {
+        this.send({
+          request_id: request.request_id,
+          error: "error running command",
+        });
+        return;
+      }
       this.properties["time-pos"] = first;
       this.propertyEvent("time-pos");
     } else if (name === "playlist-next") {
@@ -251,6 +294,16 @@ class FakeMpvSocket extends Duplex {
       }
     }
     this.send({ request_id: request.request_id, error: "success", data });
+  }
+
+  private announceFileLoaded(): void {
+    this.fileLoaded = false;
+    const publish = (): void => {
+      this.fileLoaded = true;
+      this.send({ event: "file-loaded" });
+    };
+    if (this.mode === "delayed-load") setTimeout(publish, 20);
+    else publish();
   }
 
   private movePlaylist(offset: number): void {

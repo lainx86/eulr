@@ -206,7 +206,7 @@ activity history and bottom dock remain visible throughout.
 /new                  start a new session
 /resume [session-id]  resume a saved session or open the selector
 /sessions             open the recent-session selector
-/music <command>      control local music playback
+/music <command>      control remote or local music playback
 /compact              summarize older context now
 /status               show provider, model, reasoning, session, and usage
 /clear                clear the terminal without deleting history
@@ -237,19 +237,26 @@ does not expose a stable cross-terminal image primitive, unsupported or missing
 image protocols always use the Unicode fallback. See
 [`docs/tui-architecture.md`](docs/tui-architecture.md).
 
-The right dock panel is a functional local player backed by `mpv` JSON IPC.
+The right dock panel is a functional player backed by `mpv` JSON IPC. Remote
+radio is the default source. eulr requests the station catalog and live
+now-playing state from `https://eulr-music-service.vercel.app`, gives the
+returned audio URL directly to mpv, and seeks to the station position instead
+of downloading the file into Node.js memory. Periodic refresh and end-of-track
+refresh detect station changes; position corrections occur only when drift is
+large enough to matter.
+
 eulr starts mpv lazily in audio-only mode, uses a private temporary IPC socket,
 tracks playback state, and closes the process on exit. Install `mpv` separately;
-eulr never downloads it. If it is absent, the panel reports that mpv is not available
-and the coding agent continues normally.
-
-eulr ships a small CC0 playlist under `assets/music/tracks`. When no personal
-library is configured, `/music play` starts this playlist immediately without a
-path. A configured personal library takes priority.
+eulr never downloads it. If mpv or the radio service is unavailable, the panel
+reports an offline status, retries the service with bounded exponential backoff,
+and leaves the coding agent fully usable. No audio files are bundled in the npm
+package.
 
 ```text
-/music library <path>  scan a local library
-/music builtin         switch back to the bundled CC0 playlist
+/music remote          select the synchronized eulr radio (default)
+/music local           select the configured local library
+/music off             disable music without affecting the agent
+/music library <path>  scan and select a local library
 /music play            start playback
 /music pause           pause playback
 /music toggle          toggle play/pause
@@ -265,9 +272,10 @@ path. A configured personal library takes priority.
 Supported files include MP3, FLAC, M4A, AAC, Ogg/Opus, WAV, AIFF, ALAC, WebM,
 and WMA when the installed mpv can decode them. Music focus adds Space,
 Left/Right, Up/Down, `N`, `P`, `S`, and `R` for playback, seek, volume, track,
-shuffle, and repeat controls. Library path, volume, modes, last track, and
-position are stored in eulr config independently of coding sessions. Use
-`/music builtin` to clear a personal-library override.
+shuffle, and repeat controls. Source, local-library path, remote service URL,
+volume, modes, last local track, and local position are stored in eulr config
+independently of coding sessions. A legacy config that only has `libraryPath`
+continues in local mode; otherwise new installations use remote mode.
 
 ## Tools and permissions
 
@@ -332,6 +340,7 @@ EULR_PROVIDER   provider ID
 EULR_MODEL      model ID
 EULR_API_KEY    API key for openai-compatible
 EULR_BASE_URL   compatible API base URL
+EULR_MUSIC_SERVICE_URL override the remote radio service base URL
 EULR_HOME       override eulr's data directory
 EULR_NO_BROWSER disable automatic browser opening when set to 1
 NO_COLOR        disable colors in plain output (TUI backgrounds remain painted)
@@ -354,9 +363,18 @@ Example configuration:
       "defaultModel": "<model-id>",
       "baseUrl": "https://api.openai.com/v1"
     }
+  },
+  "music": {
+    "source": "remote",
+    "serviceUrl": "https://eulr-music-service.vercel.app",
+    "volume": 70
   }
 }
 ```
+
+The remote service URL is selected in this order:
+`EULR_MUSIC_SERVICE_URL`, `music.serviceUrl` in config, then the public default
+above. Valid music sources are `remote`, `local`, and `off`.
 
 ## Architecture
 
@@ -371,7 +389,7 @@ CLI -> plain renderer | typed TUI bridge -> retained TUI store
 
 Authentication -> eulr credential store
 Providers      -> OpenAI Codex SSE | OpenAI SDK compatible streaming
-Music          -> MusicService -> mpv JSON IPC
+Music          -> RemoteMusicClient | local scanner -> MusicService -> mpv IPC
 ```
 
 `src/providers/provider.ts` defines normalized requests and streamed events.
@@ -409,8 +427,9 @@ an integration flow that reads, edits, tests, and completes a fixture task.
 - No MCP, sub-agents, or repository embeddings
 - The TUI uses a Unicode companion mark until project artwork and a stable Ink
   terminal-image adapter are available
-- Music playback requires a separately installed `mpv`; cover-art rendering is
-  not available in the baseline dock
+- Music playback requires a separately installed `mpv`; remote radio also
+  depends on the separately operated eulr music service, and cover-art
+  rendering is not available in the baseline dock
 - Commands run through the system shell and are approved as a single command
 - High-risk analysis covers common structured command forms but is not an OS
   sandbox; dynamically generated scripts can obscure their eventual behavior

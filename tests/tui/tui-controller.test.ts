@@ -101,9 +101,9 @@ describe("TuiController", () => {
     expect(fixture.music.commands.at(-1)).toEqual({ type: "toggle" });
     expect(fixture.store.getSnapshot().music.playing).toBe(true);
 
-    fixture.controller.submit("/music builtin");
+    fixture.controller.submit("/music remote");
     await vi.waitFor(() => {
-      expect(fixture.music.commands).toContainEqual({ type: "builtin" });
+      expect(fixture.music.commands).toContainEqual({ type: "remote" });
     });
 
     fixture.controller.submit("/music status");
@@ -647,6 +647,7 @@ function musicState(): MusicPlaybackState {
     volume: 70,
     shuffle: false,
     repeat: false,
+    source: "remote",
     trackIndex: 0,
     trackCount: 1,
   };

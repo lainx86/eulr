@@ -44,21 +44,24 @@ describe("MusicPlayerPanel", () => {
       statusMessage: "mpv not available",
     });
     expect(unavailable).toContain("OFFLINE");
-    expect(unavailable).toContain("mpv not available · /music status");
+    expect(unavailable).toContain("mpv not available");
   });
 
-  it("labels bundled tracks without exposing the package asset path", () => {
+  it("labels remote radio tracks without exposing an asset path", () => {
     const output = renderMusic({
       ...baseState(),
-      librarySource: "builtin",
-      libraryPath: "/package/assets/music/tracks",
+      source: "remote",
       trackIndex: 0,
       trackCount: 1,
-      track: { id: "TownTheme.mp3", title: "Town Theme" },
+      track: {
+        id: "town-theme",
+        title: "Town Theme",
+        path: "https://music.example.test/town-theme.mp3",
+      },
     });
 
-    expect(output).toContain("eulr built-in playlist · CC0");
-    expect(output).not.toContain("/package/assets");
+    expect(output).toContain("eulr focus radio · CC0");
+    expect(output).not.toContain("music.example.test");
   });
 
   it("retains a concise one-line player in minimum mode", () => {
@@ -97,6 +100,7 @@ function baseState(): MusicUiState {
     volume: 70,
     shuffle: false,
     repeat: false,
+    source: "local",
     trackIndex: -1,
     trackCount: 0,
   };

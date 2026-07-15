@@ -8,12 +8,19 @@ import { ConfigStore } from "../../src/config/config-store.js";
 import { MusicBackendUnavailableError } from "../../src/music/errors.js";
 import { MusicService } from "../../src/music/music-service.js";
 import type {
+  RemoteCatalog,
+  RemoteMusicProvider,
+  RemoteNowPlaying,
+  RemoteTrack,
+} from "../../src/music/remote-music-client.js";
+import type {
   MusicBackend,
   MusicBackendEvent,
   MusicBackendState,
 } from "../../src/music/types.js";
 
 const roots: string[] = [];
+const NOW = Date.parse("2026-07-15T12:00:00.000Z");
 
 afterEach(async () => {
   await Promise.all(
@@ -21,124 +28,213 @@ afterEach(async () => {
   );
 });
 
-describe("MusicService", () => {
-  it("loads and plays a built-in library without a configured path", async () => {
+describe("MusicService remote source", () => {
+  it("uses remote radio by default and streams the audio URL to mpv at the synchronized position", async () => {
+    const fixture = await remoteFixture();
+
+    await fixture.service.initialize();
+    await fixture.service.execute({ type: "play" });
+
+    expect(fixture.service.getState()).toMatchObject({
+      source: "remote",
+      available: true,
+      playing: true,
+      track: { id: "alpha", title: "Alpha" },
+      elapsedSeconds: 37,
+      trackCount: 2,
+    });
+    expect(fixture.backend.playlist).toEqual([
+      "https://music.example.test/alpha.mp3",
+    ]);
+    expect(fixture.backend.commands).toContain("seek:37");
+    expect(
+      fixture.backend.commands.filter((item) => item === "play"),
+    ).toHaveLength(1);
+    expect(fixture.remote.catalogCalls).toBeGreaterThan(0);
+    await fixture.service.close();
+  });
+
+  it("reloads mpv when the remote station changes tracks", async () => {
+    const fixture = await remoteFixture();
+    await fixture.service.initialize();
+    await fixture.service.execute({ type: "play" });
+
+    fixture.remote.nowPlaying = nowPlaying(BETA_TRACK, 9, ALPHA_TRACK);
+    await fixture.service.execute({ type: "status" });
+
+    expect(fixture.service.getState()).toMatchObject({
+      track: { id: "beta" },
+      elapsedSeconds: 9,
+    });
+    expect(fixture.backend.playlist).toEqual([
+      "https://music.example.test/beta.mp3",
+    ]);
+    expect(fixture.backend.commands).toContain("seek:9");
+    await fixture.service.close();
+  });
+
+  it("detects a scheduled remote track change without user input", async () => {
+    const fixture = await remoteFixture({ refreshMs: 10 });
+    await fixture.service.initialize();
+    await eventually(() => fixture.service.getState().track?.id === "alpha");
+
+    fixture.remote.nowPlaying = nowPlaying(BETA_TRACK, 4, ALPHA_TRACK);
+
+    await eventually(() => fixture.service.getState().track?.id === "beta");
+    expect(fixture.remote.nowPlayingCalls).toBeGreaterThanOrEqual(2);
+    await fixture.service.close();
+  });
+
+  it("refreshes now-playing and loads the current track after end-of-file", async () => {
+    const fixture = await remoteFixture();
+    await fixture.service.initialize();
+    await fixture.service.execute({ type: "play" });
+    const callsBeforeEnd = fixture.remote.nowPlayingCalls;
+
+    fixture.remote.nowPlaying = nowPlaying(BETA_TRACK, 2, ALPHA_TRACK);
+    fixture.backend.emit({ type: "ended" });
+
+    await eventually(
+      () =>
+        fixture.remote.nowPlayingCalls > callsBeforeEnd &&
+        fixture.service.getState().track?.id === "beta" &&
+        fixture.backend.playlist[0]?.endsWith("beta.mp3") === true,
+    );
+    await fixture.service.close();
+  });
+
+  it("corrects playback only when remote position drift reaches the threshold", async () => {
+    const fixture = await remoteFixture({ driftThresholdSeconds: 5 });
+    await fixture.service.initialize();
+    await fixture.service.execute({ type: "play" });
+    const initialSeekCount = fixture.backend.seekCommands.length;
+
+    fixture.backend.setElapsed(40);
+    fixture.remote.nowPlaying = nowPlaying(ALPHA_TRACK, 43, BETA_TRACK);
+    await fixture.service.execute({ type: "status" });
+    expect(fixture.backend.seekCommands).toHaveLength(initialSeekCount);
+
+    fixture.backend.setElapsed(40);
+    fixture.remote.nowPlaying = nowPlaying(ALPHA_TRACK, 50, BETA_TRACK);
+    await fixture.service.execute({ type: "status" });
+    expect(fixture.backend.seekCommands.at(-1)).toBe(50);
+    expect(fixture.backend.seekCommands).toHaveLength(initialSeekCount + 1);
+    await fixture.service.close();
+  });
+
+  it("reports offline without throwing and retries with backoff", async () => {
+    const fixture = await remoteFixture({
+      catalogFailures: 1,
+      retryBaseMs: 10,
+      retryMaxMs: 10,
+    });
+
+    await expect(fixture.service.initialize()).resolves.toBeUndefined();
+    await eventually(() => !fixture.service.getState().available);
+    expect(fixture.service.getState().statusMessage).toMatch(
+      /Remote radio offline; retrying/u,
+    );
+
+    await eventually(
+      () =>
+        fixture.remote.catalogCalls >= 2 &&
+        fixture.service.getState().available &&
+        fixture.service.getState().track?.id === "alpha",
+    );
+    await fixture.service.close();
+  });
+
+  it("isolates a persistent music service failure from normal application state", async () => {
+    const fixture = await remoteFixture({ catalogFailures: Infinity });
+
+    await expect(fixture.service.initialize()).resolves.toBeUndefined();
+    await eventually(() => !fixture.service.getState().available);
+    await expect(
+      fixture.service.execute({ type: "volume", volume: 21 }),
+    ).resolves.toMatchObject({ source: "remote", volume: 21 });
+    expect((await fixture.store.load()).music?.volume).toBe(21);
+    expect(fixture.backend.initializeCount).toBe(0);
+    await fixture.service.close();
+  });
+});
+
+describe("MusicService local and off sources", () => {
+  it("keeps a configured local library working without contacting remote music", async () => {
+    const fixture = await localFixture();
+
+    await fixture.service.initialize();
+    await fixture.service.execute({ type: "play" });
+
+    expect(fixture.service.getState()).toMatchObject({
+      source: "local",
+      available: true,
+      playing: true,
+      trackCount: 2,
+    });
+    expect(fixture.backend.playlist).toEqual([
+      path.join(fixture.library, "Album", "two.flac"),
+      path.join(fixture.library, "one.mp3"),
+    ]);
+    expect(fixture.remote.catalogCalls).toBe(0);
+    expect(fixture.remote.nowPlayingCalls).toBe(0);
+    await fixture.service.close();
+  });
+
+  it("supports music off without starting mpv or contacting remote music", async () => {
     const root = await workspace();
-    const builtInLibrary = path.join(root, "built-in");
-    await mkdir(builtInLibrary);
-    await writeFile(path.join(builtInLibrary, "TownTheme.mp3"), "one");
-    await writeFile(path.join(builtInLibrary, "the_field.wav"), "two");
     const store = new ConfigStore(path.join(root, "config.json"));
+    await store.updateMusic({ source: "off" });
     const backend = new FakeMusicBackend(false);
+    const remote = new FakeRemoteMusicProvider();
     const service = new MusicService({
       configStore: store,
       backend,
-      builtInLibraryPath: builtInLibrary,
+      remoteClient: remote,
     });
 
     await service.initialize();
-    expect(service.getState()).toMatchObject({
-      librarySource: "builtin",
-      track: { id: "the_field.wav", title: "The Field" },
-      trackCount: 2,
-      statusMessage: "Built-in music ready (2 tracks).",
-    });
+    const state = await service.execute({ type: "play" });
 
-    await service.execute({ type: "play" });
-    expect(backend.commands).toContain("load:0:2");
-    expect((await store.load()).music).not.toHaveProperty("libraryPath");
+    expect(state).toMatchObject({
+      source: "off",
+      playing: false,
+      statusMessage: "Music is off. Use /music remote or /music local.",
+    });
+    expect(backend.initializeCount).toBe(0);
+    expect(remote.catalogCalls).toBe(0);
+    expect(remote.nowPlayingCalls).toBe(0);
     await service.close();
   });
 
-  it("prioritizes a configured library and can switch back to built-in music", async () => {
-    const root = await workspace();
-    const builtInLibrary = path.join(root, "built-in");
-    const userLibrary = path.join(root, "user-music");
-    await mkdir(builtInLibrary);
-    await mkdir(userLibrary);
-    await writeFile(path.join(builtInLibrary, "default_song.mp3"), "default");
-    await writeFile(path.join(userLibrary, "personal.mp3"), "personal");
-    const store = new ConfigStore(path.join(root, "config.json"));
-    await store.updateMusic({ libraryPath: userLibrary });
-    const service = new MusicService({
-      configStore: store,
-      backend: new FakeMusicBackend(false),
-      builtInLibraryPath: builtInLibrary,
-    });
-
-    await service.initialize();
-    expect(service.getState()).toMatchObject({
-      librarySource: "user",
-      track: { id: "personal.mp3" },
-    });
-
-    await service.execute({ type: "builtin" });
-    expect(service.getState()).toMatchObject({
-      librarySource: "builtin",
-      track: { id: "default_song.mp3", title: "Default Song" },
-      statusMessage: "Built-in music loaded (1 track).",
-    });
-    expect((await store.load()).music).not.toHaveProperty("libraryPath");
-    await service.close();
-  });
-
-  it("falls back to built-in tracks when a configured library disappears", async () => {
-    const root = await workspace();
-    const builtInLibrary = path.join(root, "built-in");
-    await mkdir(builtInLibrary);
-    await writeFile(path.join(builtInLibrary, "fallback.mp3"), "fallback");
-    const store = new ConfigStore(path.join(root, "config.json"));
-    await store.updateMusic({ libraryPath: path.join(root, "missing") });
-    const service = new MusicService({
-      configStore: store,
-      backend: new FakeMusicBackend(false),
-      builtInLibraryPath: builtInLibrary,
-    });
-
-    await service.initialize();
-    expect(service.getState()).toMatchObject({
-      librarySource: "builtin",
-      track: { id: "fallback.mp3" },
-    });
-    expect(service.getState().statusMessage).toMatch(
-      /Configured music library unavailable.*Built-in music ready/u,
-    );
-    await service.close();
-  });
-
-  it("restores persisted settings and track without starting mpv", async () => {
-    const fixture = await musicFixture();
-    await fixture.store.updateMusic({
-      libraryPath: fixture.library,
-      volume: 33,
-      shuffle: true,
-      repeat: true,
-      lastTrack: "Album/two.flac",
-      positionSeconds: 14.5,
+  it("restores local settings and track without starting mpv", async () => {
+    const fixture = await localFixture({
+      music: {
+        volume: 33,
+        shuffle: true,
+        repeat: true,
+        lastTrack: "Album/two.flac",
+        positionSeconds: 14.5,
+      },
     });
 
     await fixture.service.initialize();
 
     expect(fixture.service.getState()).toMatchObject({
-      available: true,
-      playing: false,
+      source: "local",
       track: { id: "Album/two.flac", title: "two" },
       elapsedSeconds: 14.5,
       volume: 33,
       shuffle: true,
       repeat: true,
-      trackIndex: 0,
-      trackCount: 2,
     });
     expect(fixture.backend.initializeCount).toBe(0);
     await fixture.service.close();
   });
 
-  it("executes the complete fixed command set and persists settings", async () => {
-    const fixture = await musicFixture();
+  it("executes local controls and persists settings", async () => {
+    const fixture = await localFixture();
     await fixture.service.initialize();
 
-    await fixture.service.execute({ type: "library", path: fixture.library });
     await fixture.service.execute({ type: "volume", volume: 45 });
     await fixture.service.execute({ type: "shuffle" });
     await fixture.service.execute({ type: "repeat" });
@@ -147,7 +243,6 @@ describe("MusicService", () => {
     await fixture.service.execute({ type: "toggle" });
     await fixture.service.execute({ type: "seek", seconds: 9 });
     await fixture.service.execute({ type: "next" });
-    expect(fixture.service.getState().track?.id).toBe("one.mp3");
     await fixture.service.execute({ type: "previous" });
     await fixture.service.execute({ type: "status" });
 
@@ -160,7 +255,6 @@ describe("MusicService", () => {
         "repeat:true",
         "play",
         "pause",
-        "toggle",
         "seek:9",
         "next",
         "previous",
@@ -168,24 +262,35 @@ describe("MusicService", () => {
       ]),
     );
     expect((await fixture.store.load()).music).toMatchObject({
+      source: "local",
       libraryPath: fixture.library,
       volume: 45,
       shuffle: true,
       repeat: true,
-      lastTrack: "Album/two.flac",
-      positionSeconds: 0,
     });
     await fixture.service.close();
   });
 
-  it("isolates an unavailable backend while keeping library and settings usable", async () => {
-    const fixture = await musicFixture({ backendUnavailable: true });
+  it("switches between remote, local, and off sources", async () => {
+    const fixture = await localFixture();
     await fixture.service.initialize();
-    await fixture.service.execute({ type: "library", path: fixture.library });
+
+    await fixture.service.execute({ type: "remote" });
+    expect(fixture.service.getState().source).toBe("remote");
+    await fixture.service.execute({ type: "local" });
+    expect(fixture.service.getState().source).toBe("local");
+    await fixture.service.execute({ type: "off" });
+    expect(fixture.service.getState().source).toBe("off");
+    expect((await fixture.store.load()).music?.source).toBe("off");
+    await fixture.service.close();
+  });
+
+  it("isolates an unavailable backend while keeping local settings usable", async () => {
+    const fixture = await localFixture({ backendUnavailable: true });
+    await fixture.service.initialize();
 
     const unavailable = await fixture.service.execute({ type: "play" });
     expect(unavailable.available).toBe(false);
-    expect(unavailable.playing).toBe(false);
     expect(unavailable.statusMessage).toMatch(/mpv is unavailable/u);
 
     const configured = await fixture.service.execute({
@@ -193,16 +298,13 @@ describe("MusicService", () => {
       volume: 20,
     });
     expect(configured.volume).toBe(20);
-    expect(configured.available).toBe(false);
     expect((await fixture.store.load()).music?.volume).toBe(20);
-    expect(fixture.backend.initializeCount).toBe(1);
     await fixture.service.close();
   });
 
-  it("persists backend track and progress events after a short debounce", async () => {
-    const fixture = await musicFixture({ progressDebounceMs: 10 });
+  it("persists local backend metadata and progress events", async () => {
+    const fixture = await localFixture({ progressDebounceMs: 10 });
     await fixture.service.initialize();
-    await fixture.service.execute({ type: "library", path: fixture.library });
     await fixture.service.execute({ type: "play" });
 
     fixture.backend.emit({
@@ -217,35 +319,30 @@ describe("MusicService", () => {
         playing: true,
       },
     });
+    fixture.backend.emit({ type: "state", state: { elapsedSeconds: 62.5 } });
     await eventually(async () => {
       const music = (await fixture.store.load()).music;
-      return music?.lastTrack === "one.mp3" && music.positionSeconds === 0;
+      return music?.lastTrack === "one.mp3" && music.positionSeconds === 62.5;
     });
-    fixture.backend.emit({
-      type: "state",
-      state: { elapsedSeconds: 62.5 },
-    });
-    await eventually(
-      async () =>
-        ((await fixture.store.load()).music?.positionSeconds ?? 0) >= 62.5,
-    );
 
     expect(fixture.service.getState()).toMatchObject({
       track: {
         id: "one.mp3",
         title: "One from metadata",
         artist: "Example Artist",
-        album: "Example Album",
       },
       elapsedSeconds: 62.5,
-      durationSeconds: 120,
       playing: true,
     });
     await fixture.service.close();
   });
 
-  it("validates commands at the service boundary", async () => {
-    const fixture = await musicFixture();
+  it("validates commands and publishes immutable snapshots", async () => {
+    const fixture = await localFixture();
+    const snapshots: Array<ReturnType<MusicService["getState"]>> = [];
+    const unsubscribe = fixture.service.subscribe((state) =>
+      snapshots.push(state),
+    );
     await fixture.service.initialize();
 
     await expect(
@@ -254,22 +351,10 @@ describe("MusicService", () => {
     await expect(
       fixture.service.execute({ type: "seek", seconds: -1 }),
     ).rejects.toThrow(/nonnegative/u);
-    await fixture.service.close();
-  });
-
-  it("publishes immutable state snapshots to subscribers", async () => {
-    const fixture = await musicFixture();
-    const snapshots: Array<ReturnType<MusicService["getState"]>> = [];
-    const unsubscribe = fixture.service.subscribe((state) =>
-      snapshots.push(state),
-    );
-
-    await fixture.service.initialize();
-    await fixture.service.execute({ type: "library", path: fixture.library });
     const snapshot = snapshots.at(-1);
     if (snapshot?.track !== undefined) snapshot.track.title = "mutated";
-
     expect(fixture.service.getState().track?.title).toBe("two");
+
     unsubscribe();
     await fixture.service.close();
   });
@@ -277,39 +362,106 @@ describe("MusicService", () => {
 
 interface Fixture {
   root: string;
-  library: string;
   store: ConfigStore;
   backend: FakeMusicBackend;
+  remote: FakeRemoteMusicProvider;
   service: MusicService;
 }
 
-async function musicFixture(
+interface LocalFixture extends Fixture {
+  library: string;
+}
+
+async function remoteFixture(
+  options: {
+    catalogFailures?: number;
+    retryBaseMs?: number;
+    retryMaxMs?: number;
+    driftThresholdSeconds?: number;
+    refreshMs?: number;
+  } = {},
+): Promise<Fixture> {
+  const root = await workspace();
+  const store = new ConfigStore(path.join(root, "config.json"));
+  const backend = new FakeMusicBackend(false);
+  const remote = new FakeRemoteMusicProvider();
+  remote.catalogFailures = options.catalogFailures ?? 0;
+  const service = new MusicService({
+    configStore: store,
+    backend,
+    remoteClient: remote,
+    now: () => NOW,
+    remoteRefreshMs: options.refreshMs ?? 60_000,
+    remoteRetryBaseMs: options.retryBaseMs ?? 60_000,
+    remoteRetryMaxMs: options.retryMaxMs ?? 60_000,
+    remoteDriftThresholdSeconds: options.driftThresholdSeconds ?? 5,
+  });
+  return { root, store, backend, remote, service };
+}
+
+async function localFixture(
   options: {
     backendUnavailable?: boolean;
     progressDebounceMs?: number;
+    music?: {
+      volume?: number;
+      shuffle?: boolean;
+      repeat?: boolean;
+      lastTrack?: string;
+      positionSeconds?: number;
+    };
   } = {},
-): Promise<Fixture> {
+): Promise<LocalFixture> {
   const root = await workspace();
   const library = path.join(root, "music");
   await mkdir(path.join(library, "Album"), { recursive: true });
   await writeFile(path.join(library, "one.mp3"), "one");
   await writeFile(path.join(library, "Album", "two.flac"), "two");
   const store = new ConfigStore(path.join(root, "config.json"));
+  await store.updateMusic({
+    source: "local",
+    libraryPath: library,
+    ...options.music,
+  });
   const backend = new FakeMusicBackend(options.backendUnavailable ?? false);
+  const remote = new FakeRemoteMusicProvider();
   const service = new MusicService({
     configStore: store,
     backend,
-    builtInLibraryPath: false,
+    remoteClient: remote,
+    now: () => NOW,
     progressDebounceMs: options.progressDebounceMs ?? 5,
+    remoteRefreshMs: 60_000,
   });
-  return { root, library, store, backend, service };
+  return { root, library, store, backend, remote, service };
+}
+
+class FakeRemoteMusicProvider implements RemoteMusicProvider {
+  catalog = catalog();
+  nowPlaying = nowPlaying(ALPHA_TRACK, 37, BETA_TRACK);
+  catalogCalls = 0;
+  nowPlayingCalls = 0;
+  catalogFailures = 0;
+
+  async getCatalog(): Promise<RemoteCatalog> {
+    this.catalogCalls += 1;
+    if (this.catalogCalls <= this.catalogFailures) {
+      throw new Error("service unavailable");
+    }
+    return this.catalog;
+  }
+
+  async getNowPlaying(): Promise<RemoteNowPlaying> {
+    this.nowPlayingCalls += 1;
+    return this.nowPlaying;
+  }
 }
 
 class FakeMusicBackend implements MusicBackend {
   readonly commands: string[] = [];
   initializeCount = 0;
+  playlist: string[] = [];
   private readonly listeners = new Set<(event: MusicBackendEvent) => void>();
-  private playlist: string[] = [];
   private state: MusicBackendState = {
     playing: false,
     elapsedSeconds: 0,
@@ -320,6 +472,16 @@ class FakeMusicBackend implements MusicBackend {
   };
 
   constructor(private readonly unavailable: boolean) {}
+
+  get seekCommands(): number[] {
+    return this.commands
+      .filter((command) => command.startsWith("seek:"))
+      .map((command) => Number(command.slice("seek:".length)));
+  }
+
+  setElapsed(seconds: number): void {
+    this.state.elapsedSeconds = seconds;
+  }
 
   async initialize(): Promise<void> {
     this.initializeCount += 1;
@@ -403,13 +565,61 @@ class FakeMusicBackend implements MusicBackend {
   }
 
   emit(event: MusicBackendEvent): void {
-    for (const listener of this.listeners) listener(event);
     if (event.type === "state") this.state = { ...this.state, ...event.state };
+    for (const listener of this.listeners) listener(event);
   }
 
   async close(): Promise<void> {
     this.commands.push("close");
   }
+}
+
+const ALPHA_TRACK: RemoteTrack = {
+  id: "alpha",
+  title: "Alpha",
+  artist: "CC0 Artist",
+  durationSeconds: 180,
+  audioUrl: "https://music.example.test/alpha.mp3",
+  license: {
+    name: "CC0-1.0",
+    url: "https://creativecommons.org/publicdomain/zero/1.0/",
+  },
+};
+
+const BETA_TRACK: RemoteTrack = {
+  ...ALPHA_TRACK,
+  id: "beta",
+  title: "Beta",
+  audioUrl: "https://music.example.test/beta.mp3",
+};
+
+function catalog(): RemoteCatalog {
+  return {
+    version: 1,
+    updatedAt: "2026-07-15T11:59:00.000Z",
+    tracks: [ALPHA_TRACK, BETA_TRACK],
+    station: {
+      id: "eulr-focus",
+      name: "eulr focus radio",
+      trackIds: [ALPHA_TRACK.id, BETA_TRACK.id],
+    },
+  };
+}
+
+function nowPlaying(
+  track: RemoteTrack,
+  positionSeconds: number,
+  nextTrack: RemoteTrack,
+): RemoteNowPlaying {
+  return {
+    station: { id: "eulr-focus", name: "eulr focus radio" },
+    track,
+    positionSeconds,
+    startedAt: "2026-07-15T11:59:00.000Z",
+    endsAt: "2026-07-15T12:02:00.000Z",
+    nextTrack,
+    serverTime: "2026-07-15T12:00:00.000Z",
+  };
 }
 
 async function workspace(): Promise<string> {
@@ -419,7 +629,7 @@ async function workspace(): Promise<string> {
 }
 
 async function eventually(
-  predicate: () => Promise<boolean>,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs = 1_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;

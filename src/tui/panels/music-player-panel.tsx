@@ -116,6 +116,7 @@ export function MusicPlayerPanel({
 }
 
 function playbackLabel(music: MusicUiState): string {
+  if (music.source === "off") return "OFF";
   if (!music.available) return "OFFLINE";
   if (music.track === undefined) return "EMPTY";
   return music.playing ? "PLAYING" : "PAUSED";
@@ -127,12 +128,16 @@ function playbackColor(music: MusicUiState): string {
 }
 
 function trackDetails(music: MusicUiState): string {
-  if (!music.available) return "mpv not available · /music status";
-  if (music.track === undefined) return "Use /music library <path>";
+  if (music.source === "off") return "Music disabled · /music remote";
+  if (!music.available) return music.statusMessage;
+  if (music.track === undefined)
+    return music.source === "remote"
+      ? "Remote radio · connecting"
+      : "Use /music library <path>";
   const metadata = [music.track.artist, music.track.album]
     .filter(Boolean)
     .join(" · ");
   if (metadata !== "") return metadata;
-  if (music.librarySource === "builtin") return "eulr built-in playlist · CC0";
+  if (music.source === "remote") return "eulr focus radio · CC0";
   return music.libraryPath || "Local music library";
 }

@@ -7,6 +7,8 @@ export const providerConfigSchema = z.object({
 });
 
 export const musicConfigSchema = z.object({
+  source: z.enum(["remote", "local", "off"]).optional(),
+  serviceUrl: z.url().optional(),
   libraryPath: z.string().min(1).optional(),
   volume: z.number().finite().min(0).max(100).optional(),
   shuffle: z.boolean().optional(),

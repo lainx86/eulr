@@ -32,6 +32,21 @@ The root is a vertical constraint layout with permanent region order:
 The dock is always a horizontal companion/music split. Scroll offsets belong to
 the activity and inspector viewports, so neither can move the input or dock.
 
+## Music boundary
+
+`MusicService` owns the independent `remote`, `local`, and `off` source state;
+the dock only renders its typed snapshot. The default remote adapter uses native
+`fetch` plus Zod for the public catalog and now-playing contracts. It passes the
+current track URL to the existing mpv JSON IPC backend, synchronizes to the
+server position, refreshes periodically and after end-of-file, and applies a
+seek only when position drift crosses the configured threshold. HTTP or schema
+failures become an offline player state with bounded backoff, never a TUI or
+agent failure.
+
+Local mode retains the filesystem scanner and persisted library settings. Off
+mode starts neither HTTP transport nor mpv. Audio is deliberately absent from
+the npm package.
+
 ## Terminal lifecycle
 
 Ink owns raw mode, bracketed paste, alternate-screen entry, resize, and normal

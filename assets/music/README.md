@@ -1,16 +1,16 @@
-# eulr built-in music
+# eulr music assets
 
-The audio files under `tracks/` form eulr's built-in playlist. They are loaded
-when no personal music library is configured, so `/music play` works without a
-path. A personal library selected with `/music library <path>` takes priority;
-`/music builtin` switches back to these bundled tracks.
+eulr does not bundle audio files. The default `remote` source obtains the CC0
+station catalog and live playback position from:
 
-All tracks in this directory are provided under CC0 1.0. No attribution is
-required. Do not add audio under a different license without documenting that
-license and its redistribution requirements here.
+```text
+https://eulr-music-service.vercel.app/api/v1/catalog
+https://eulr-music-service.vercel.app/api/v1/now-playing
+```
 
-Every supported audio file under `tracks/` is discovered at runtime and sorted
-deterministically by its relative path. New CC0 tracks can be added without
-updating a hard-coded manifest.
+The returned audio URL is streamed directly by mpv. Override the service with
+`EULR_MUSIC_SERVICE_URL` or `music.serviceUrl` in `~/.eulr/config.json`.
 
-SPDX-License-Identifier: CC0-1.0
+Personal audio remains outside the repository and can be selected with
+`/music library <path>`. Do not recreate `assets/music/tracks`; npm packages are
+tested to exclude that directory and all MP3/WAV files.

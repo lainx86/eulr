@@ -109,8 +109,9 @@ export interface MusicUiState {
   volume: number;
   shuffle: boolean;
   repeat: boolean;
+  source: "remote" | "local" | "off";
+  serviceUrl?: string;
   libraryPath?: string;
-  librarySource?: "builtin" | "user";
   trackIndex: number;
   trackCount: number;
 }
@@ -167,6 +168,7 @@ export const emptyMusicUiState = (): MusicUiState => ({
   volume: 70,
   shuffle: false,
   repeat: false,
+  source: "remote",
   trackIndex: -1,
   trackCount: 0,
 });

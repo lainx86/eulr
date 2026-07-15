@@ -52,12 +52,22 @@ interface PendingRequest {
   onAbort?: () => void;
 }
 
+interface PendingFileLoad {
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  timer: NodeJS.Timeout;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+}
+
 const envelopeSchema = z.looseObject({
   request_id: z.number().int().optional(),
   error: z.string().optional(),
   data: z.unknown().optional(),
   event: z.string().optional(),
   name: z.string().optional(),
+  reason: z.string().optional(),
+  file_error: z.string().optional(),
 });
 
 export interface MpvBackendOptions {
@@ -68,6 +78,7 @@ export interface MpvBackendOptions {
   temporaryRoot?: string;
   startupTimeoutMs?: number;
   commandTimeoutMs?: number;
+  loadTimeoutMs?: number;
   connectRetryMs?: number;
   shutdownTimeoutMs?: number;
 }
@@ -80,10 +91,12 @@ export class MpvBackend implements MusicBackend {
   private readonly temporaryRoot: string;
   private readonly startupTimeoutMs: number;
   private readonly commandTimeoutMs: number;
+  private readonly loadTimeoutMs: number;
   private readonly connectRetryMs: number;
   private readonly shutdownTimeoutMs: number;
   private readonly listeners = new Set<(event: MusicBackendEvent) => void>();
   private readonly pending = new Map<number, PendingRequest>();
+  private pendingFileLoad: PendingFileLoad | undefined;
   private child: ChildProcess | undefined;
   private socket: Socket | undefined;
   private endpoint: string | undefined;
@@ -111,6 +124,7 @@ export class MpvBackend implements MusicBackend {
     this.temporaryRoot = options.temporaryRoot ?? tmpdir();
     this.startupTimeoutMs = options.startupTimeoutMs ?? 5_000;
     this.commandTimeoutMs = options.commandTimeoutMs ?? 5_000;
+    this.loadTimeoutMs = options.loadTimeoutMs ?? 30_000;
     this.connectRetryMs = options.connectRetryMs ?? 25;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? 750;
   }
@@ -152,12 +166,19 @@ export class MpvBackend implements MusicBackend {
       );
     }
     await this.initialize(signal);
-    await this.send(["loadfile", paths[0] ?? "", "replace"], signal);
+    await this.loadFile(paths[0] ?? "", "replace", signal);
     for (const filePath of paths.slice(1)) {
       await this.send(["loadfile", filePath, "append"], signal);
     }
     if (trackIndex !== 0) {
-      await this.send(["set_property", "playlist-pos", trackIndex], signal);
+      const loaded = this.waitForFileLoaded(signal);
+      try {
+        await this.send(["set_property", "playlist-pos", trackIndex], signal);
+        await loaded.promise;
+      } catch (error) {
+        loaded.cancel();
+        throw error;
+      }
     }
   }
 
@@ -256,6 +277,7 @@ export class MpvBackend implements MusicBackend {
     this.closing = true;
     const closedError = new MusicBackendError("The mpv backend was closed");
     this.rejectPending(closedError);
+    this.rejectPendingFileLoad(closedError);
 
     const socket = this.socket;
     this.socket = undefined;
@@ -459,13 +481,26 @@ export class MpvBackend implements MusicBackend {
   }
 
   private handleMpvEvent(envelope: z.infer<typeof envelopeSchema>): void {
+    if (envelope.event === "file-loaded") {
+      this.resolvePendingFileLoad();
+      return;
+    }
     if (envelope.event === "end-file") {
+      if (envelope.reason === "error") {
+        this.rejectPendingFileLoad(
+          new MusicBackendError(
+            `mpv could not load the track${envelope.file_error === undefined ? "" : `: ${redactText(envelope.file_error)}`}`,
+          ),
+        );
+      }
+      if (envelope.reason !== "eof") return;
       const update: Partial<MusicBackendState> = {
         elapsedSeconds: 0,
         durationSeconds: 0,
       };
       this.state = { ...this.state, ...update };
       this.emit({ type: "state", state: update });
+      this.emit({ type: "ended" });
       return;
     }
     if (envelope.event !== "property-change" || envelope.name === undefined) {
@@ -521,6 +556,90 @@ export class MpvBackend implements MusicBackend {
   ): Promise<void> {
     await this.initialize(signal);
     await this.send(command, signal);
+  }
+
+  private async loadFile(
+    location: string,
+    mode: "replace" | "append",
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (mode === "append") {
+      await this.send(["loadfile", location, mode], signal);
+      return;
+    }
+    const loaded = this.waitForFileLoaded(signal);
+    try {
+      await this.send(["loadfile", location, mode], signal);
+      await loaded.promise;
+    } catch (error) {
+      loaded.cancel();
+      throw error;
+    }
+  }
+
+  private waitForFileLoaded(signal?: AbortSignal): {
+    promise: Promise<void>;
+    cancel: () => void;
+  } {
+    throwIfCancelled(signal);
+    this.rejectPendingFileLoad(
+      new MusicBackendError("A newer mpv track load replaced this request"),
+    );
+    let pending!: PendingFileLoad;
+    const promise = new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pendingFileLoad !== pending) return;
+        this.pendingFileLoad = undefined;
+        cleanupPendingFileLoad(pending);
+        reject(
+          new MusicBackendError(
+            `mpv track load timed out after ${this.loadTimeoutMs} ms`,
+          ),
+        );
+      }, this.loadTimeoutMs);
+      timer.unref();
+      pending = { resolve, reject, timer, signal };
+      if (signal !== undefined) {
+        pending.onAbort = () => {
+          if (this.pendingFileLoad !== pending) return;
+          this.pendingFileLoad = undefined;
+          cleanupPendingFileLoad(pending);
+          reject(
+            new CancellationError("mpv track load cancelled", {
+              cause: signal.reason,
+            }),
+          );
+        };
+        signal.addEventListener("abort", pending.onAbort, { once: true });
+      }
+      this.pendingFileLoad = pending;
+    });
+    void promise.catch(() => undefined);
+    return {
+      promise,
+      cancel: () => {
+        if (this.pendingFileLoad !== pending) return;
+        this.pendingFileLoad = undefined;
+        cleanupPendingFileLoad(pending);
+        pending.resolve();
+      },
+    };
+  }
+
+  private resolvePendingFileLoad(): void {
+    const pending = this.pendingFileLoad;
+    if (pending === undefined) return;
+    this.pendingFileLoad = undefined;
+    cleanupPendingFileLoad(pending);
+    pending.resolve();
+  }
+
+  private rejectPendingFileLoad(error: unknown): void {
+    const pending = this.pendingFileLoad;
+    if (pending === undefined) return;
+    this.pendingFileLoad = undefined;
+    cleanupPendingFileLoad(pending);
+    pending.reject(error);
   }
 
   private async send(
@@ -611,6 +730,7 @@ export class MpvBackend implements MusicBackend {
     this.socket = undefined;
     socket?.destroy();
     this.rejectPending(normalized);
+    this.rejectPendingFileLoad(normalized);
     this.emit({ type: "unavailable", message: redactText(normalized.message) });
   }
 
@@ -655,6 +775,13 @@ export class MpvBackend implements MusicBackend {
 }
 
 function cleanupPending(pending: PendingRequest): void {
+  clearTimeout(pending.timer);
+  if (pending.onAbort !== undefined) {
+    pending.signal?.removeEventListener("abort", pending.onAbort);
+  }
+}
+
+function cleanupPendingFileLoad(pending: PendingFileLoad): void {
   clearTimeout(pending.timer);
   if (pending.onAbort !== undefined) {
     pending.signal?.removeEventListener("abort", pending.onAbort);

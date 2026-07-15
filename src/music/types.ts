@@ -4,7 +4,11 @@ export interface MusicTrack {
   artist?: string;
   album?: string;
   path: string;
+  audioUrl?: string;
+  durationSeconds?: number;
 }
+
+export type MusicSource = "remote" | "local" | "off";
 
 export interface MusicPlaybackState {
   available: boolean;
@@ -16,14 +20,17 @@ export interface MusicPlaybackState {
   volume: number;
   shuffle: boolean;
   repeat: boolean;
+  source: MusicSource;
+  serviceUrl?: string;
   libraryPath?: string;
-  librarySource?: "builtin" | "user";
   trackIndex: number;
   trackCount: number;
 }
 
 export type MusicCommand =
-  | { type: "builtin" }
+  | { type: "remote" }
+  | { type: "local" }
+  | { type: "off" }
   | { type: "library"; path: string }
   | { type: "play" }
   | { type: "pause" }
@@ -51,6 +58,7 @@ export interface MusicBackendState {
 
 export type MusicBackendEvent =
   | { type: "state"; state: Partial<MusicBackendState> }
+  | { type: "ended" }
   | { type: "unavailable"; message: string };
 
 export interface MusicBackend {

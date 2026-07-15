@@ -500,7 +500,9 @@ export function parseMusicCommand(input: string): MusicCommand {
   if (
     [
       "play",
-      "builtin",
+      "remote",
+      "local",
+      "off",
       "pause",
       "toggle",
       "next",
