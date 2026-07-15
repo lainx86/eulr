@@ -60,6 +60,7 @@ function parseMusicCommand(
         ? { name: "music", command: { type: "library", path: value } }
         : invalidMusic(input, "Usage: /music library <path>");
     case "play":
+    case "builtin":
     case "pause":
     case "toggle":
     case "next":
@@ -88,7 +89,7 @@ function parseMusicCommand(
     default:
       return invalidMusic(
         input,
-        "Use /music library, play, pause, toggle, next, previous, seek, volume, shuffle, repeat, or status.",
+        "Use /music builtin, library, play, pause, toggle, next, previous, seek, volume, shuffle, repeat, or status.",
       );
   }
 }

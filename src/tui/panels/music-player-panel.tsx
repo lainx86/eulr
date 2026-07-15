@@ -129,9 +129,10 @@ function playbackColor(music: MusicUiState): string {
 function trackDetails(music: MusicUiState): string {
   if (!music.available) return "mpv not available · /music status";
   if (music.track === undefined) return "Use /music library <path>";
-  return (
-    [music.track.artist, music.track.album].filter(Boolean).join(" · ") ||
-    music.libraryPath ||
-    "Local music library"
-  );
+  const metadata = [music.track.artist, music.track.album]
+    .filter(Boolean)
+    .join(" · ");
+  if (metadata !== "") return metadata;
+  if (music.librarySource === "builtin") return "eulr built-in playlist · CC0";
+  return music.libraryPath || "Local music library";
 }

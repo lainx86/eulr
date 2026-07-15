@@ -17,11 +17,13 @@ export interface MusicPlaybackState {
   shuffle: boolean;
   repeat: boolean;
   libraryPath?: string;
+  librarySource?: "builtin" | "user";
   trackIndex: number;
   trackCount: number;
 }
 
 export type MusicCommand =
+  | { type: "builtin" }
   | { type: "library"; path: string }
   | { type: "play" }
   | { type: "pause" }

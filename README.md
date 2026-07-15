@@ -221,8 +221,13 @@ tracks playback state, and closes the process on exit. Install `mpv` separately;
 eulr never downloads it. If it is absent, the panel reports that mpv is not available
 and the coding agent continues normally.
 
+eulr ships a small CC0 playlist under `assets/music/tracks`. When no personal
+library is configured, `/music play` starts this playlist immediately without a
+path. A configured personal library takes priority.
+
 ```text
 /music library <path>  scan a local library
+/music builtin         switch back to the bundled CC0 playlist
 /music play            start playback
 /music pause           pause playback
 /music toggle          toggle play/pause
@@ -239,7 +244,8 @@ Supported files include MP3, FLAC, M4A, AAC, Ogg/Opus, WAV, AIFF, ALAC, WebM,
 and WMA when the installed mpv can decode them. Music focus adds Space,
 Left/Right, Up/Down, `N`, `P`, `S`, and `R` for playback, seek, volume, track,
 shuffle, and repeat controls. Library path, volume, modes, last track, and
-position are stored in eulr config independently of coding sessions.
+position are stored in eulr config independently of coding sessions. Use
+`/music builtin` to clear a personal-library override.
 
 ## Tools and permissions
 

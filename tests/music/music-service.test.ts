@@ -22,6 +22,90 @@ afterEach(async () => {
 });
 
 describe("MusicService", () => {
+  it("loads and plays a built-in library without a configured path", async () => {
+    const root = await workspace();
+    const builtInLibrary = path.join(root, "built-in");
+    await mkdir(builtInLibrary);
+    await writeFile(path.join(builtInLibrary, "TownTheme.mp3"), "one");
+    await writeFile(path.join(builtInLibrary, "the_field.wav"), "two");
+    const store = new ConfigStore(path.join(root, "config.json"));
+    const backend = new FakeMusicBackend(false);
+    const service = new MusicService({
+      configStore: store,
+      backend,
+      builtInLibraryPath: builtInLibrary,
+    });
+
+    await service.initialize();
+    expect(service.getState()).toMatchObject({
+      librarySource: "builtin",
+      track: { id: "the_field.wav", title: "The Field" },
+      trackCount: 2,
+      statusMessage: "Built-in music ready (2 tracks).",
+    });
+
+    await service.execute({ type: "play" });
+    expect(backend.commands).toContain("load:0:2");
+    expect((await store.load()).music).not.toHaveProperty("libraryPath");
+    await service.close();
+  });
+
+  it("prioritizes a configured library and can switch back to built-in music", async () => {
+    const root = await workspace();
+    const builtInLibrary = path.join(root, "built-in");
+    const userLibrary = path.join(root, "user-music");
+    await mkdir(builtInLibrary);
+    await mkdir(userLibrary);
+    await writeFile(path.join(builtInLibrary, "default_song.mp3"), "default");
+    await writeFile(path.join(userLibrary, "personal.mp3"), "personal");
+    const store = new ConfigStore(path.join(root, "config.json"));
+    await store.updateMusic({ libraryPath: userLibrary });
+    const service = new MusicService({
+      configStore: store,
+      backend: new FakeMusicBackend(false),
+      builtInLibraryPath: builtInLibrary,
+    });
+
+    await service.initialize();
+    expect(service.getState()).toMatchObject({
+      librarySource: "user",
+      track: { id: "personal.mp3" },
+    });
+
+    await service.execute({ type: "builtin" });
+    expect(service.getState()).toMatchObject({
+      librarySource: "builtin",
+      track: { id: "default_song.mp3", title: "Default Song" },
+      statusMessage: "Built-in music loaded (1 track).",
+    });
+    expect((await store.load()).music).not.toHaveProperty("libraryPath");
+    await service.close();
+  });
+
+  it("falls back to built-in tracks when a configured library disappears", async () => {
+    const root = await workspace();
+    const builtInLibrary = path.join(root, "built-in");
+    await mkdir(builtInLibrary);
+    await writeFile(path.join(builtInLibrary, "fallback.mp3"), "fallback");
+    const store = new ConfigStore(path.join(root, "config.json"));
+    await store.updateMusic({ libraryPath: path.join(root, "missing") });
+    const service = new MusicService({
+      configStore: store,
+      backend: new FakeMusicBackend(false),
+      builtInLibraryPath: builtInLibrary,
+    });
+
+    await service.initialize();
+    expect(service.getState()).toMatchObject({
+      librarySource: "builtin",
+      track: { id: "fallback.mp3" },
+    });
+    expect(service.getState().statusMessage).toMatch(
+      /Configured music library unavailable.*Built-in music ready/u,
+    );
+    await service.close();
+  });
+
   it("restores persisted settings and track without starting mpv", async () => {
     const fixture = await musicFixture();
     await fixture.store.updateMusic({
@@ -215,6 +299,7 @@ async function musicFixture(
   const service = new MusicService({
     configStore: store,
     backend,
+    builtInLibraryPath: false,
     progressDebounceMs: options.progressDebounceMs ?? 5,
   });
   return { root, library, store, backend, service };

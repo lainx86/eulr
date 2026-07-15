@@ -17,6 +17,7 @@ describe("interactive command parsing", () => {
 
   it.each([
     ["/music play", { type: "play" }],
+    ["/music builtin", { type: "builtin" }],
     ["/music pause", { type: "pause" }],
     ["/music toggle", { type: "toggle" }],
     ["/music next", { type: "next" }],

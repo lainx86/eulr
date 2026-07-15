@@ -4,6 +4,7 @@ import { redactText } from "../auth/redaction.js";
 import type { ConfigStore } from "../config/config-store.js";
 import type { MusicConfig } from "../config/schema.js";
 import { isAbortError } from "../utils/errors.js";
+import { builtInMusicLibraryPath } from "./builtin-library.js";
 import { MusicError } from "./errors.js";
 import {
   scanMusicLibrary,
@@ -34,6 +35,7 @@ export interface MusicServiceOptions {
   backend?: MusicBackend;
   backendFactory?: () => MusicBackend;
   scanLibrary?: LibraryScanner;
+  builtInLibraryPath?: string | false;
   progressDebounceMs?: number;
 }
 
@@ -42,6 +44,7 @@ export class MusicService {
   private readonly suppliedBackend: MusicBackend | undefined;
   private readonly backendFactory: () => MusicBackend;
   private readonly scanLibrary: LibraryScanner;
+  private readonly builtInLibraryPath: string | undefined;
   private readonly progressDebounceMs: number;
   private readonly listeners = new Set<MusicStateListener>();
   private tracks: MusicTrack[] = [];
@@ -72,6 +75,10 @@ export class MusicService {
     this.suppliedBackend = options.backend;
     this.backendFactory = options.backendFactory ?? (() => new MpvBackend());
     this.scanLibrary = options.scanLibrary ?? scanMusicLibrary;
+    this.builtInLibraryPath =
+      options.builtInLibraryPath === false
+        ? undefined
+        : (options.builtInLibraryPath ?? builtInMusicLibraryPath());
     this.progressDebounceMs =
       options.progressDebounceMs ?? DEFAULT_PROGRESS_DEBOUNCE_MS;
   }
@@ -113,6 +120,9 @@ export class MusicService {
     this.assertOpen();
     await this.initialize();
     switch (command.type) {
+      case "builtin":
+        await this.setBuiltInLibrary(signal);
+        break;
       case "library":
         await this.setLibrary(command.path, signal);
         break;
@@ -192,14 +202,19 @@ export class MusicService {
     if (music.libraryPath !== undefined) {
       try {
         const library = await this.scanLibrary(music.libraryPath);
-        this.applyLibrary(library, music.lastTrack);
+        this.applyLibrary(library, music.lastTrack, "user");
         this.state.statusMessage =
           library.tracks.length === 0
             ? "The music library contains no supported audio files."
             : `Music library ready (${library.tracks.length} tracks).`;
       } catch (error) {
-        this.state.statusMessage = `Music library unavailable: ${safeMessage(error)}`;
+        await this.loadBuiltInFallback(
+          music,
+          `Configured music library unavailable: ${safeMessage(error)}`,
+        );
       }
+    } else {
+      await this.loadBuiltInFallback(music);
     }
     this.initialized = true;
     this.notify();
@@ -210,7 +225,8 @@ export class MusicService {
     signal?: AbortSignal,
   ): Promise<void> {
     const library = await this.scanLibrary(libraryPath, { signal });
-    this.applyLibrary(library);
+    await this.pauseForLibraryChange(signal);
+    this.applyLibrary(library, undefined, "user");
     this.playlistLoaded = false;
     this.state.elapsedSeconds = 0;
     this.state.durationSeconds = 0;
@@ -226,8 +242,57 @@ export class MusicService {
     });
   }
 
-  private applyLibrary(library: MusicLibrary, lastTrack?: string): void {
-    this.tracks = library.tracks;
+  private async setBuiltInLibrary(signal?: AbortSignal): Promise<void> {
+    if (this.builtInLibraryPath === undefined) {
+      throw new MusicError("The built-in music library is not available");
+    }
+    const library = await this.scanLibrary(this.builtInLibraryPath, { signal });
+    await this.pauseForLibraryChange(signal);
+    this.applyLibrary(library, undefined, "builtin");
+    this.playlistLoaded = false;
+    this.state.elapsedSeconds = 0;
+    this.state.durationSeconds = 0;
+    this.state.playing = false;
+    this.state.statusMessage = builtInLibraryStatus(library, "loaded");
+    await this.configStore.updateMusic((current) => {
+      delete current.libraryPath;
+      if (this.state.track === undefined) delete current.lastTrack;
+      else current.lastTrack = this.state.track.id;
+      current.positionSeconds = 0;
+      return current;
+    });
+  }
+
+  private async loadBuiltInFallback(
+    music: MusicConfig,
+    warning?: string,
+  ): Promise<void> {
+    if (this.builtInLibraryPath === undefined) {
+      if (warning !== undefined) this.state.statusMessage = warning;
+      return;
+    }
+    try {
+      const library = await this.scanLibrary(this.builtInLibraryPath);
+      this.applyLibrary(library, music.lastTrack, "builtin");
+      const ready = builtInLibraryStatus(library, "ready");
+      this.state.statusMessage =
+        warning === undefined ? ready : `${warning} ${ready}`;
+    } catch (error) {
+      const builtInError = `Built-in music unavailable: ${safeMessage(error)}`;
+      this.state.statusMessage =
+        warning === undefined ? builtInError : `${warning} ${builtInError}`;
+    }
+  }
+
+  private applyLibrary(
+    library: MusicLibrary,
+    lastTrack?: string,
+    source: MusicPlaybackState["librarySource"] = "user",
+  ): void {
+    this.tracks =
+      source === "builtin"
+        ? withBuiltInDisplayTitles(library.tracks)
+        : library.tracks;
     let index =
       lastTrack === undefined
         ? -1
@@ -237,10 +302,30 @@ export class MusicService {
     this.state = {
       ...this.state,
       libraryPath: library.root,
+      librarySource: source,
       trackIndex: index,
       trackCount: this.tracks.length,
       ...(track === undefined ? { track: undefined } : { track }),
     };
+  }
+
+  private async pauseForLibraryChange(signal?: AbortSignal): Promise<void> {
+    if (
+      !this.backendReady ||
+      this.backend === undefined ||
+      !this.playlistLoaded
+    ) {
+      return;
+    }
+    try {
+      await this.backend.pause(signal);
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+      await this.markBackendUnavailable(
+        error,
+        "Unable to pause music before changing libraries",
+      );
+    }
   }
 
   private async play(signal?: AbortSignal): Promise<void> {
@@ -569,3 +654,27 @@ function safeMessage(error: unknown): string {
 }
 
 export { DEFAULT_PROGRESS_DEBOUNCE_MS, DEFAULT_VOLUME };
+
+function builtInLibraryStatus(
+  library: MusicLibrary,
+  state: "loaded" | "ready",
+): string {
+  return library.tracks.length === 0
+    ? "The built-in music library contains no supported audio files."
+    : `Built-in music ${state} (${library.tracks.length} ${library.tracks.length === 1 ? "track" : "tracks"}).`;
+}
+
+function withBuiltInDisplayTitles(tracks: readonly MusicTrack[]): MusicTrack[] {
+  return tracks.map((track) => ({
+    ...track,
+    title: humanizeTrackTitle(track.title),
+  }));
+}
+
+function humanizeTrackTitle(title: string): string {
+  return title
+    .replace(/([a-z])([A-Z])/gu, "$1 $2")
+    .replace(/[_-]+/gu, " ")
+    .trim()
+    .replace(/\b\p{L}/gu, (letter) => letter.toUpperCase());
+}

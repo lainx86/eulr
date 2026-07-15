@@ -415,6 +415,7 @@ export function parseMusicCommand(input: string): MusicCommand {
   if (
     [
       "play",
+      "builtin",
       "pause",
       "toggle",
       "next",

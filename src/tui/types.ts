@@ -99,6 +99,7 @@ export interface MusicUiState {
   shuffle: boolean;
   repeat: boolean;
   libraryPath?: string;
+  librarySource?: "builtin" | "user";
   trackIndex: number;
   trackCount: number;
 }

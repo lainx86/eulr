@@ -47,6 +47,20 @@ describe("MusicPlayerPanel", () => {
     expect(unavailable).toContain("mpv not available · /music status");
   });
 
+  it("labels bundled tracks without exposing the package asset path", () => {
+    const output = renderMusic({
+      ...baseState(),
+      librarySource: "builtin",
+      libraryPath: "/package/assets/music/tracks",
+      trackIndex: 0,
+      trackCount: 1,
+      track: { id: "TownTheme.mp3", title: "Town Theme" },
+    });
+
+    expect(output).toContain("eulr built-in playlist · CC0");
+    expect(output).not.toContain("/package/assets");
+  });
+
   it("retains a concise one-line player in minimum mode", () => {
     const output = renderMusic(baseState(), "minimum", 48, 4);
     expect(output).toContain("No tracks loaded");

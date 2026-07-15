@@ -100,6 +100,11 @@ describe("TuiController", () => {
     expect(fixture.music.commands.at(-1)).toEqual({ type: "toggle" });
     expect(fixture.store.getSnapshot().music.playing).toBe(true);
 
+    fixture.controller.submit("/music builtin");
+    await vi.waitFor(() => {
+      expect(fixture.music.commands).toContainEqual({ type: "builtin" });
+    });
+
     fixture.controller.submit("/music status");
     await vi.waitFor(() => {
       expect(fixture.store.getSnapshot().statusMessage).toBe("Playing");
