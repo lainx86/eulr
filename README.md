@@ -10,6 +10,10 @@ CLI or another coding agent and does not read their credentials.
 User instruction -> agent loop -> model -> local tool -> model -> final answer
 ```
 
+<p align="center">
+  <img src="screenshots/idle.png" alt="Demo" width="600">
+</p>
+
 ## Requirements
 
 - Node.js 22 or newer
