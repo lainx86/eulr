@@ -11,7 +11,7 @@ User instruction -> agent loop -> model -> local tool -> model -> final answer
 ```
 
 <p align="center">
-  <img src="screenshots/idle.png" alt="Demo" width="600">
+  <img src="screenshots/idle.png" alt="Demo" width="900">
 </p>
 
 ## Requirements
