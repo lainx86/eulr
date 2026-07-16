@@ -43,7 +43,7 @@
   },
   "license": "MIT",
   "dependencies": {
-    "diff": "8.0.2",
+    "diff": "8.0.3",
     "ink": "7.1.0",
     "openai": "^6.46.0",
     "react": "19.2.7",
