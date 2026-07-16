@@ -6,10 +6,6 @@ loop, message history, provider adapters, authentication, tools, permission
 decisions, context management, and persisted sessions. It does not run Codex
 CLI or another coding agent and does not read their credentials.
 
-```text
-User instruction -> agent loop -> model -> local tool -> model -> final answer
-```
-
 <p align="center">
   <img src="screenshots/idle.png" alt="Demo" width="900">
 </p>
@@ -24,11 +20,13 @@ User instruction -> agent loop -> model -> local tool -> model -> final answer
 ## Install
 
 ### Via NPM
+
 ```bash
 npm i @lainx86/eulr
 ```
 
 ### or build locally by cloning this repo and:
+
 ```bash
 pnpm install
 pnpm build
@@ -393,16 +391,97 @@ above. Valid music sources are `remote`, `local`, and `off`.
 
 The runtime is split into provider-independent layers:
 
-```text
-CLI -> plain renderer | typed TUI bridge -> retained TUI store
-              `-> Agent -> ModelProvider
-          |-> ToolRegistry -> PermissionManager -> local filesystem/processes
-          |-> ContextManager
-          `-> SessionService -> JSONL event store
+```mermaid
+flowchart TB
+    User([User]) --> CLI[CLI entrypoint]
 
-Authentication -> eulr credential store
-Providers      -> OpenAI Codex SSE | OpenAI SDK compatible streaming
-Music          -> RemoteMusicClient | local scanner -> MusicService -> mpv IPC
+    subgraph Presentation[Terminal presentation]
+        CLI -->|TTY| TUI[Full-screen TUI]
+        CLI -->|Non-TTY or --plain| Plain[Plain renderer]
+        TUI <--> Controller[TUI controller]
+        Bridge[Typed event bridge] --> Store[Retained TUI store]
+        Store --> TUI
+    end
+
+    subgraph Core[Provider-independent agent core]
+        Controller --> Agent[Agent facade]
+        Plain --> Agent
+        Agent --> Loop[Agent loop]
+        Loop <--> Context[Context manager]
+        Loop --> Registry[Tool registry]
+        Loop --> Sessions[Session service]
+        Loop -. Agent UI events .-> Bridge
+    end
+
+    subgraph Providers[Model providers]
+        Loop -->|Normalized ModelRequest| ProviderAPI[ModelProvider interface]
+        ProviderAPI -->|Normalized ModelEvent stream| Loop
+        ProviderAPI --> Codex[OpenAI Codex provider]
+        ProviderAPI --> Compatible[OpenAI-compatible provider]
+        Codex -->|Native fetch and SSE| CodexService[ChatGPT Codex service]
+        Compatible -->|Official OpenAI SDK| CompatibleAPI[Compatible API endpoint]
+    end
+
+    subgraph LocalExecution[Local execution boundary]
+        Registry --> Permissions[Permission manager]
+        Permissions --> Tools[read / write / edit / bash]
+        Tools --> Workspace[(Workspace files and processes)]
+    end
+
+    subgraph Persistence[Private eulr data]
+        Sessions --> EventStore[(JSONL session store)]
+        Auth[Auth service] --> Credentials[(eulr credential store)]
+        Auth --> Codex
+        Auth --> Compatible
+    end
+
+    subgraph Music[Independent music subsystem]
+        TUI --> MusicService[Music service]
+        MusicService --> Remote[Remote radio client]
+        MusicService --> Local[Local library scanner]
+        Remote --> MPV[mpv JSON IPC backend]
+        Local --> MPV
+    end
+```
+
+One agent task follows the same provider-neutral loop regardless of which
+provider or terminal renderer is active:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User
+    participant UI as TUI / plain CLI
+    participant Agent
+    participant Loop as Agent loop
+    participant Model as ModelProvider
+    participant Tools as Tool registry
+    participant Session as JSONL session
+
+    User->>UI: Submit instruction
+    UI->>Agent: run(task, AbortSignal)
+    Agent->>Session: Append user message
+
+    loop Until the model finishes without tool calls
+        Agent->>Loop: Execute next turn
+        Loop->>Model: Stream normalized request
+        Model-->>Loop: Text, usage, and tool-call events
+        Loop-->>UI: Typed progress events
+
+        alt Model requests tools
+            Loop->>Session: Append assistant tool calls
+            loop Sequential tool execution
+                Loop->>Tools: Validate, authorize, and execute
+                Tools-->>Loop: Tool result or normalized error
+                Loop->>Session: Append tool result
+            end
+        else Final response
+            Loop->>Session: Append assistant response and usage
+        end
+    end
+
+    Agent-->>UI: Completed, failed, or cancelled
+    UI-->>User: Render final state
 ```
 
 `src/providers/provider.ts` defines normalized requests and streamed events.
