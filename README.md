@@ -395,53 +395,39 @@ The runtime is split into provider-independent layers:
 flowchart TB
     User([User]) --> CLI[CLI entrypoint]
 
-    subgraph Presentation[Terminal presentation]
-        CLI -->|TTY| TUI[Full-screen TUI]
-        CLI -->|Non-TTY or --plain| Plain[Plain renderer]
-        TUI <--> Controller[TUI controller]
-        Bridge[Typed event bridge] --> Store[Retained TUI store]
-        Store --> TUI
-    end
+    CLI -->|Interactive TTY| TUI[Full-screen TUI]
+    CLI -->|Non-TTY or --plain| Plain[Plain renderer]
+    TUI <--> Controller[TUI controller]
+    Controller --> Agent[Agent facade]
+    Plain --> Agent
 
-    subgraph Core[Provider-independent agent core]
-        Controller --> Agent[Agent facade]
-        Plain --> Agent
-        Agent --> Loop[Agent loop]
-        Loop <--> Context[Context manager]
-        Loop --> Registry[Tool registry]
-        Loop --> Sessions[Session service]
-        Loop -. Agent UI events .-> Bridge
-    end
+    Agent --> CoreLoop[Agent loop]
+    CoreLoop <--> Context[Context manager]
+    CoreLoop <--> Provider[ModelProvider interface]
+    CoreLoop --> Registry[Tool registry]
+    CoreLoop --> Sessions[Session service]
 
-    subgraph Providers[Model providers]
-        Loop -->|Normalized ModelRequest| ProviderAPI[ModelProvider interface]
-        ProviderAPI -->|Normalized ModelEvent stream| Loop
-        ProviderAPI --> Codex[OpenAI Codex provider]
-        ProviderAPI --> Compatible[OpenAI-compatible provider]
-        Codex -->|Native fetch and SSE| CodexService[ChatGPT Codex service]
-        Compatible -->|Official OpenAI SDK| CompatibleAPI[Compatible API endpoint]
-    end
+    Provider --> Codex[OpenAI Codex adapter]
+    Provider --> Compatible[OpenAI-compatible adapter]
+    Codex --> CodexService[ChatGPT Codex service]
+    Compatible --> CompatibleAPI[Compatible API endpoint]
 
-    subgraph LocalExecution[Local execution boundary]
-        Registry --> Permissions[Permission manager]
-        Permissions --> Tools[read / write / edit / bash]
-        Tools --> Workspace[(Workspace files and processes)]
-    end
+    Registry --> Permissions[Permission manager]
+    Permissions --> Tools[read / write / edit / bash]
+    Tools --> Workspace[(Workspace files and processes)]
 
-    subgraph Persistence[Private eulr data]
-        Sessions --> EventStore[(JSONL session store)]
-        Auth[Auth service] --> Credentials[(eulr credential store)]
-        Auth --> Codex
-        Auth --> Compatible
-    end
+    Sessions --> EventStore[(JSONL event store)]
+    Auth[Auth service] --> Credentials[(eulr credential store)]
+    Auth --> Codex
+    Auth --> Compatible
 
-    subgraph Music[Independent music subsystem]
-        TUI --> MusicService[Music service]
-        MusicService --> Remote[Remote radio client]
-        MusicService --> Local[Local library scanner]
-        Remote --> MPV[mpv JSON IPC backend]
-        Local --> MPV
-    end
+    CoreLoop -. Typed UI events .-> Bridge[Event bridge]
+    Bridge --> Store[Retained TUI store]
+    Store --> TUI
+
+    TUI <--> Music[Music service]
+    Music --> Sources[remote / local / off]
+    Sources --> MPV[mpv JSON IPC backend]
 ```
 
 One agent task follows the same provider-neutral loop regardless of which
@@ -453,7 +439,7 @@ sequenceDiagram
     actor User
     participant UI as TUI / plain CLI
     participant Agent
-    participant Loop as Agent loop
+    participant AgentLoop as Agent loop
     participant Model as ModelProvider
     participant Tools as Tool registry
     participant Session as JSONL session
@@ -463,20 +449,20 @@ sequenceDiagram
     Agent->>Session: Append user message
 
     loop Until the model finishes without tool calls
-        Agent->>Loop: Execute next turn
-        Loop->>Model: Stream normalized request
-        Model-->>Loop: Text, usage, and tool-call events
-        Loop-->>UI: Typed progress events
+        Agent->>AgentLoop: Execute next turn
+        AgentLoop->>Model: Stream normalized request
+        Model-->>AgentLoop: Text, usage, and tool-call events
+        AgentLoop-->>UI: Typed progress events
 
         alt Model requests tools
-            Loop->>Session: Append assistant tool calls
+            AgentLoop->>Session: Append assistant tool calls
             loop Sequential tool execution
-                Loop->>Tools: Validate, authorize, and execute
-                Tools-->>Loop: Tool result or normalized error
-                Loop->>Session: Append tool result
+                AgentLoop->>Tools: Validate, authorize, and execute
+                Tools-->>AgentLoop: Tool result or normalized error
+                AgentLoop->>Session: Append tool result
             end
         else Final response
-            Loop->>Session: Append assistant response and usage
+            AgentLoop->>Session: Append assistant response and usage
         end
     end
 
