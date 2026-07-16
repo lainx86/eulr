@@ -1,5 +1,5 @@
 {
-  "name": "eulr",
+  "name": "@lainx86/eulr",
   "version": "0.1.0",
   "description": "Minimal terminal-first AI coding agent",
   "type": "module",
