@@ -33,6 +33,14 @@
     "coding-agent",
     "terminal"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lainx86/eulr.git"
+  },
+  "homepage": "https://github.com/lainx86/eulr#readme",
+  "bugs": {
+    "url": "https://github.com/lainx86/eulr/issues"
+  },
   "license": "MIT",
   "dependencies": {
     "diff": "8.0.2",
