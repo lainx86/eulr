@@ -23,6 +23,12 @@ User instruction -> agent loop -> model -> local tool -> model -> final answer
 
 ## Install
 
+### Via NPM
+```bash
+npm i @lainx86/eulr
+```
+
+### or build locally by cloning this repo and:
 ```bash
 pnpm install
 pnpm build
