@@ -13,6 +13,7 @@ import type {
   MusicUiState,
   OutputViewState,
   OverlayState,
+  RuntimeStatusUiState,
   RunPhase,
   TuiState,
 } from "../types.js";
@@ -37,6 +38,13 @@ export interface TuiStoreOptions {
   session: SessionState;
   version: string;
   music?: MusicUiState;
+  authentication?: {
+    method?: "chatgpt" | "api-key";
+    account?: string;
+    plan?: string;
+  };
+  autoApprove?: boolean;
+  contextWindow?: number;
 }
 
 export class TuiStore {
@@ -51,6 +59,8 @@ export class TuiStore {
       cwd: options.cwd,
       sessionId: options.session.id,
       version: options.version,
+      idleView: "welcome",
+      runtimeStatus: runtimeStatus(options.session, options),
       phase: sessionPhase(options.session),
       task: displayOptionalLine(latestUserMessage(options.session)),
       activities: sessionActivities(options.session).map(sanitizeActivity),
@@ -95,6 +105,9 @@ export class TuiStore {
     reasoningEffort?: ReasoningEffort;
     cwd: string;
     session: SessionState;
+    authentication?: TuiStoreOptions["authentication"];
+    autoApprove?: boolean;
+    contextWindow?: number;
   }): void {
     const phase = sessionPhase(input.session);
     this.replace({
@@ -104,6 +117,7 @@ export class TuiStore {
       reasoningEffort: input.reasoningEffort,
       cwd: input.cwd,
       sessionId: input.session.id,
+      runtimeStatus: runtimeStatus(input.session, input),
       phase,
       task: displayOptionalLine(latestUserMessage(input.session)),
       activities: sessionActivities(input.session).map(sanitizeActivity),
@@ -141,6 +155,7 @@ export class TuiStore {
     };
     this.patch({
       phase: "working",
+      idleView: "welcome",
       task: displayLine(task),
       activities: [...this.state.activities, activity].slice(-MAX_ACTIVITIES),
       inspector: {
@@ -412,6 +427,20 @@ export class TuiStore {
     this.patch({ usage: { ...usage } });
   }
 
+  showIdleStatus(input: {
+    session: SessionState;
+    authentication?: TuiStoreOptions["authentication"];
+    autoApprove?: boolean;
+    contextWindow?: number;
+  }): void {
+    this.patch({
+      idleView: "status",
+      usage: { ...input.session.usage },
+      runtimeStatus: runtimeStatus(input.session, input),
+      statusMessage: `Runtime status · ${this.state.providerId} · ${this.state.model}`,
+    });
+  }
+
   beginModelCatalog(providerId: string, activeModel: string): void {
     const existing = this.state.modelCatalog;
     this.patch({
@@ -440,6 +469,9 @@ export class TuiStore {
           ...(model.name === undefined
             ? {}
             : { name: displayLine(model.name) }),
+          ...(model.contextWindow === undefined
+            ? {}
+            : { contextWindow: model.contextWindow }),
           ...(model.defaultReasoningEffort === undefined
             ? {}
             : {
@@ -450,13 +482,14 @@ export class TuiStore {
           ...(model.supportedReasoningEfforts === undefined
             ? {}
             : {
-                supportedReasoningEfforts:
-                  model.supportedReasoningEfforts.map((option) => ({
+                supportedReasoningEfforts: model.supportedReasoningEfforts.map(
+                  (option) => ({
                     effort: displayLine(option.effort),
                     ...(option.description === undefined
                       ? {}
                       : { description: displayLine(option.description) }),
-                  })),
+                  }),
+                ),
               }),
         })),
       },
@@ -610,6 +643,7 @@ export class TuiStore {
 
   clearVisualHistory(): void {
     this.patch({
+      idleView: "welcome",
       activities: [],
       inspector: {
         activeTab: "answer",
@@ -638,6 +672,40 @@ export class TuiStore {
     this.state = next;
     for (const listener of this.listeners) listener();
   }
+}
+
+function runtimeStatus(
+  session: SessionState,
+  input: {
+    authentication?: TuiStoreOptions["authentication"];
+    autoApprove?: boolean;
+    contextWindow?: number;
+  },
+): RuntimeStatusUiState {
+  const activeMessages = session.messages.slice(session.compactedMessageCount);
+  const serializedCharacters = activeMessages.reduce(
+    (total, message) => total + JSON.stringify(message).length,
+    session.contextSummary?.length ?? 0,
+  );
+  return {
+    ...(input.authentication?.method === undefined
+      ? {}
+      : { authenticationMethod: input.authentication.method }),
+    ...(input.authentication?.account === undefined
+      ? {}
+      : { account: displayLine(input.authentication.account) }),
+    ...(input.authentication?.plan === undefined
+      ? {}
+      : { plan: displayLine(input.authentication.plan) }),
+    permissionMode: input.autoApprove === true ? "auto" : "ask",
+    sessionStatus: session.status,
+    ...(input.contextWindow === undefined
+      ? {}
+      : { contextWindow: input.contextWindow }),
+    estimatedContextTokens: Math.ceil(serializedCharacters / 4),
+    activeMessages: activeMessages.length,
+    compactedMessages: session.compactedMessageCount,
+  };
 }
 
 function sessionPhase(session: SessionState): RunPhase {

@@ -25,6 +25,13 @@ export interface InteractiveRuntime {
   provider: ModelProvider;
   model: string;
   reasoningEffort?: ReasoningEffort;
+  authentication?: {
+    method?: "chatgpt" | "api-key";
+    account?: string;
+    plan?: string;
+  };
+  autoApprove?: boolean;
+  contextWindow?: number;
   cwd: string;
   session: SessionState;
   sessions: SessionService;
@@ -205,8 +212,7 @@ export async function runInteractive(
                   reasoningEffort,
                 );
               runtime.model = command.model;
-              if (reasoningEffort === undefined)
-                delete runtime.reasoningEffort;
+              if (reasoningEffort === undefined) delete runtime.reasoningEffort;
               else runtime.reasoningEffort = reasoningEffort;
               runtime.session = await runtime.agent.refresh();
               options.renderer.line(

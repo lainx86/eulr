@@ -27,6 +27,7 @@ export interface AuthenticationStatus {
   expiresAt?: number;
   accountId?: string;
   email?: string;
+  planType?: string;
   baseUrl?: string;
 }
 

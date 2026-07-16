@@ -310,6 +310,26 @@ export class TuiController {
         }
         case "status": {
           const state = this.runtime.agent.session;
+          const snapshot = this.store.getSnapshot();
+          const isIdleHome =
+            snapshot.phase === "idle" &&
+            snapshot.task === undefined &&
+            snapshot.activities.length === 0;
+          if (isIdleHome) {
+            this.store.showIdleStatus({
+              session: state,
+              ...(this.runtime.authentication === undefined
+                ? {}
+                : { authentication: this.runtime.authentication }),
+              ...(this.runtime.autoApprove === undefined
+                ? {}
+                : { autoApprove: this.runtime.autoApprove }),
+              ...(this.runtime.contextWindow === undefined
+                ? {}
+                : { contextWindow: this.runtime.contextWindow }),
+            });
+            return;
+          }
           this.store.setStatus(
             `${this.runtime.providerId} · ${this.runtime.model}${this.runtime.reasoningEffort === undefined ? "" : ` · ${this.runtime.reasoningEffort}`} · ${state.id} · ${state.usage.inputTokens} in / ${state.usage.outputTokens} out`,
           );
@@ -433,6 +453,12 @@ export class TuiController {
         reasoningEffort,
       );
     this.runtime.model = model;
+    const selectedModel = this.store
+      .getSnapshot()
+      .modelCatalog.models.find((candidate) => candidate.id === model);
+    if (selectedModel?.contextWindow === undefined)
+      delete this.runtime.contextWindow;
+    else this.runtime.contextWindow = selectedModel.contextWindow;
     if (reasoningEffort === undefined) delete this.runtime.reasoningEffort;
     else this.runtime.reasoningEffort = reasoningEffort;
     this.runtime.session = await this.runtime.agent.refresh();

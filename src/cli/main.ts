@@ -197,6 +197,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         session: runtime.session,
         version: VERSION,
         music: music.getState(),
+        ...(runtime.authentication === undefined
+          ? {}
+          : { authentication: runtime.authentication }),
+        ...(runtime.autoApprove === undefined
+          ? {}
+          : { autoApprove: runtime.autoApprove }),
+        ...(runtime.contextWindow === undefined
+          ? {}
+          : { contextWindow: runtime.contextWindow }),
       });
       const bridge = new AgentTuiEventBridge(store);
       const permissionBroker = new TuiPermissionBroker(store);
@@ -446,11 +455,31 @@ async function createRuntime(
     emit: presentation.emit,
   });
   const agent = new Agent(loop, services.sessions, activeSession);
+  const [authentication] = await services.auth.status(providerId);
   return {
     providerId,
     provider,
     model,
     reasoningEffort,
+    ...(authentication === undefined
+      ? {}
+      : {
+          authentication: {
+            ...(authentication.method === undefined
+              ? {}
+              : { method: authentication.method }),
+            ...(authentication.email === undefined
+              ? {}
+              : { account: authentication.email }),
+            ...(authentication.planType === undefined
+              ? {}
+              : { plan: authentication.planType }),
+          },
+        }),
+    autoApprove: request.yes === true,
+    ...(info?.contextWindow === undefined
+      ? {}
+      : { contextWindow: info.contextWindow }),
     cwd,
     session: activeSession,
     sessions: services.sessions,

@@ -170,6 +170,7 @@ export class AuthService {
           expiresAt: credential.expiresAt,
           ...(credential.accountId ? { accountId: credential.accountId } : {}),
           ...(credential.email ? { email: credential.email } : {}),
+          ...(credential.planType ? { planType: credential.planType } : {}),
         };
       }),
     );

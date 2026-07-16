@@ -3,6 +3,7 @@ import { Box, Text } from "ink";
 import type { ModelCatalogItem, TuiState } from "../types.js";
 import { colors } from "../theme/colors.js";
 import { symbols } from "../theme/symbols.js";
+import { progressBar } from "./view-utils.js";
 
 const QUICK_ACTIONS = [
   ["/help", "Show all commands"],
@@ -23,7 +24,12 @@ export function WelcomePanel({
 }): React.JSX.Element {
   const cardWidth = Math.max(24, Math.min(width - 6, 104));
   const detailed = cardWidth >= 82 && height >= 22;
-  const cardHeight = Math.max(9, Math.min(detailed ? 23 : 14, height - 2));
+  const statusDetailed =
+    state.idleView === "status" && detailed && height >= 24;
+  const cardHeight = Math.max(
+    9,
+    Math.min(statusDetailed ? 25 : detailed ? 23 : 14, height - 2),
+  );
 
   return (
     <Box
@@ -104,21 +110,27 @@ function DetailedContent({
     <Box marginTop={1} flexDirection="column" flexGrow={1} overflow="hidden">
       <Box flexGrow={1} overflow="hidden">
         <Box width={actionWidth} paddingRight={2} flexDirection="column">
-          <Text color={colors.accent} bold>
-            {symbols.selected} Get started
-          </Text>
-          <Box marginTop={1} flexDirection="column">
-            {QUICK_ACTIONS.map(([command, description]) => (
-              <Box key={command} height={1} overflow="hidden">
-                <Box width={14}>
-                  <Text color={colors.accent}>{command}</Text>
-                </Box>
-                <Text color={colors.muted} wrap="truncate-end">
-                  {description}
-                </Text>
+          {state.idleView === "status" ? (
+            <RuntimeStatus state={state} width={actionWidth - 2} />
+          ) : (
+            <>
+              <Text color={colors.accent} bold>
+                {symbols.selected} Get started
+              </Text>
+              <Box marginTop={1} flexDirection="column">
+                {QUICK_ACTIONS.map(([command, description]) => (
+                  <Box key={command} height={1} overflow="hidden">
+                    <Box width={14}>
+                      <Text color={colors.accent}>{command}</Text>
+                    </Box>
+                    <Text color={colors.muted} wrap="truncate-end">
+                      {description}
+                    </Text>
+                  </Box>
+                ))}
               </Box>
-            ))}
-          </Box>
+            </>
+          )}
         </Box>
         <Box
           flexGrow={1}
@@ -185,6 +197,34 @@ function DetailedContent({
 }
 
 function CompactContent({ state }: { state: TuiState }): React.JSX.Element {
+  if (state.idleView === "status") {
+    const contextWindow = activeContextWindow(state);
+    return (
+      <Box marginTop={1} flexDirection="column" overflow="hidden">
+        <Text color={colors.accent} bold>
+          {symbols.selected} Runtime status
+        </Text>
+        <Text color={colors.foreground} wrap="truncate-end">
+          {state.model}
+          {state.reasoningEffort === undefined
+            ? ""
+            : ` · reasoning ${state.reasoningEffort}`}
+        </Text>
+        <Text color={colors.muted} wrap="truncate-end">
+          {state.providerId} · {state.sessionId} ·{" "}
+          {state.runtimeStatus.sessionStatus}
+        </Text>
+        <Text color={colors.muted} wrap="truncate-end">
+          {formatCount(state.usage.inputTokens)} in ·{" "}
+          {formatCount(state.usage.outputTokens)} out · context ~
+          {formatCount(state.runtimeStatus.estimatedContextTokens)}
+          {contextWindow === undefined
+            ? ""
+            : ` / ${formatCount(contextWindow)}`}
+        </Text>
+      </Box>
+    );
+  }
   return (
     <Box marginTop={1} flexDirection="column" overflow="hidden">
       <Box columnGap={2} overflow="hidden">
@@ -198,13 +238,125 @@ function CompactContent({ state }: { state: TuiState }): React.JSX.Element {
         model · {state.model}
         {state.reasoningEffort === undefined
           ? ""
-          : ` · reasoning ${state.reasoningEffort}`} · {catalogSummary(state)}
+          : ` · reasoning ${state.reasoningEffort}`}{" "}
+        · {catalogSummary(state)}
       </Text>
       <Text color={colors.muted} wrap="truncate-middle">
         workspace · {state.cwd}
       </Text>
     </Box>
   );
+}
+
+function RuntimeStatus({
+  state,
+  width,
+}: {
+  state: TuiState;
+  width: number;
+}): React.JSX.Element {
+  const status = state.runtimeStatus;
+  const contextWindow = activeContextWindow(state);
+  const contextRatio =
+    contextWindow === undefined || contextWindow <= 0
+      ? 0
+      : status.estimatedContextTokens / contextWindow;
+  const account =
+    status.account === undefined
+      ? authenticationLabel(status.authenticationMethod)
+      : `${status.account}${status.plan === undefined ? "" : ` (${titleCase(status.plan)})`}`;
+  const permission =
+    status.permissionMode === "auto"
+      ? "workspace · normal operations auto-approved"
+      : "workspace · ask for approval";
+  const usage = `${formatCount(state.usage.inputTokens)} in · ${formatCount(state.usage.outputTokens)} out${state.usage.cachedInputTokens > 0 ? ` · ${formatCount(state.usage.cachedInputTokens)} cached` : ""}`;
+  const context = `~${formatCount(status.estimatedContextTokens)}${contextWindow === undefined ? "" : ` / ${formatCount(contextWindow)}`} · ${status.activeMessages} message${status.activeMessages === 1 ? "" : "s"}`;
+
+  return (
+    <Box flexDirection="column" overflow="hidden">
+      <Text color={colors.accent} bold>
+        {symbols.selected} Runtime status · eulr v{state.version}
+      </Text>
+      <Box marginTop={1} flexDirection="column" overflow="hidden">
+        <StatusRow
+          label="Model"
+          value={`${state.model}${state.reasoningEffort === undefined ? "" : ` · reasoning ${state.reasoningEffort}`}`}
+        />
+        <StatusRow
+          label="Provider"
+          value={`${state.providerId} · ${authenticationLabel(status.authenticationMethod)}`}
+        />
+        <StatusRow label="Directory" value={state.cwd} />
+        <StatusRow label="Permissions" value={permission} />
+        <StatusRow label="Account" value={account} />
+        <StatusRow
+          label="Session"
+          value={`${state.sessionId} · ${status.sessionStatus}`}
+        />
+        <StatusRow label="Usage" value={usage} />
+        <StatusRow label="Context" value={context} />
+        {contextWindow !== undefined && (
+          <Box height={1} overflow="hidden">
+            <Box width={13} />
+            <Text color={colors.accent}>
+              {progressBar(contextRatio, Math.max(6, Math.min(22, width - 15)))}
+            </Text>
+            <Text color={colors.muted}>
+              {" "}
+              {Math.round(Math.min(1, contextRatio) * 100)}%
+            </Text>
+          </Box>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+function StatusRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}): React.JSX.Element {
+  return (
+    <Box height={1} overflow="hidden">
+      <Box width={13} flexShrink={0}>
+        <Text color={colors.muted}>{label}</Text>
+      </Box>
+      <Text color={colors.foreground} wrap="truncate-middle">
+        {value}
+      </Text>
+    </Box>
+  );
+}
+
+function activeContextWindow(state: TuiState): number | undefined {
+  return (
+    state.runtimeStatus.contextWindow ??
+    state.modelCatalog.models.find((model) => model.id === state.model)
+      ?.contextWindow
+  );
+}
+
+function authenticationLabel(
+  method: TuiState["runtimeStatus"]["authenticationMethod"],
+): string {
+  if (method === "chatgpt") return "ChatGPT subscription";
+  if (method === "api-key") return "API credential";
+  return "provider credential";
+}
+
+function formatCount(value: number): string {
+  if (value >= 1_000_000)
+    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}M`;
+  if (value >= 1_000)
+    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`;
+  return String(value);
+}
+
+function titleCase(value: string): string {
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function ModelRow({

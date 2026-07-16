@@ -146,6 +146,13 @@ The idle main area shows a dense welcome card with real quick actions, workspace
 and session details, and the active provider's asynchronously refreshed model
 catalog. A catalog failure keeps the configured model visible and does not
 block input.
+While the welcome screen is idle, `/status` replaces the quick-action column
+with a retained runtime status view. It shows the active model and reasoning
+level, provider and authentication method, workspace approval mode, account
+identity when available, session state, cumulative token usage, and an
+estimated conversation-context bar against the model catalog's context window.
+Provider rate-limit periods are not shown because eulr does not currently
+receive authoritative reset data for them.
 During a task it becomes an activity timeline and context inspector with
 `Changes`, `File`, `Output`, and `Answer` tabs. Read results open File,
 write/edit metadata produces an in-memory diff (including new files and
@@ -208,7 +215,7 @@ activity history and bottom dock remain visible throughout.
 /sessions             open the recent-session selector
 /music <command>      control remote or local music playback
 /compact              summarize older context now
-/status               show provider, model, reasoning, session, and usage
+/status               open rich idle status; show a concise status while working
 /clear                clear the terminal without deleting history
 /exit                 flush the session and exit
 ```

@@ -215,6 +215,7 @@ describe("AuthService", () => {
       expiresAt: 123,
       accountId: "account-1",
       email: "person@example.test",
+      planType: "plus",
     });
 
     const status = await auth.status("openai-codex");
@@ -226,6 +227,7 @@ describe("AuthService", () => {
         expiresAt: 123,
         accountId: "account-1",
         email: "person@example.test",
+        planType: "plus",
       },
     ]);
     expect(JSON.stringify(status)).not.toContain("secret");

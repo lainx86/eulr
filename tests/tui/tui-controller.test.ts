@@ -114,6 +114,66 @@ describe("TuiController", () => {
     await fixture.controller.shutdown();
   });
 
+  it("opens the rich runtime status in the idle card", async () => {
+    const session = {
+      ...sessionState("status-session", "gpt-5.6-sol"),
+      usage: {
+        inputTokens: 12_400,
+        outputTokens: 830,
+        cachedInputTokens: 4_200,
+      },
+    };
+    const fixture = createFixture({
+      providerId: "openai-codex",
+      model: "gpt-5.6-sol",
+      session,
+    });
+    fixture.runtime.runtime.reasoningEffort = "ultra";
+    fixture.runtime.runtime.authentication = {
+      method: "chatgpt",
+      account: "person@example.test",
+      plan: "plus",
+    };
+    fixture.runtime.runtime.autoApprove = false;
+    fixture.runtime.runtime.contextWindow = 258_000;
+
+    fixture.controller.submit("/status");
+    await vi.waitFor(() => {
+      expect(fixture.store.getSnapshot()).toMatchObject({
+        idleView: "status",
+        runtimeStatus: {
+          authenticationMethod: "chatgpt",
+          account: "person@example.test",
+          plan: "plus",
+          permissionMode: "ask",
+          contextWindow: 258_000,
+          sessionStatus: "active",
+        },
+        usage: session.usage,
+      });
+    });
+
+    await fixture.controller.shutdown();
+  });
+
+  it("keeps working status as a concise message", async () => {
+    const fixture = createFixture();
+    const run = deferred<void>();
+    fixture.runtime.setRunHandler(async () => run.promise);
+    fixture.controller.submit("inspect repository");
+    await vi.waitFor(() => expect(fixture.runtime.run).toHaveBeenCalledOnce());
+
+    fixture.controller.submit("/status");
+    expect(fixture.store.getSnapshot().idleView).toBe("welcome");
+    expect(fixture.store.getSnapshot().statusMessage).toContain(
+      "fake-provider · fake-model",
+    );
+
+    run.resolve();
+    await vi.waitFor(() => expect(fixture.runtime.flush).toHaveBeenCalled());
+    await fixture.controller.shutdown();
+  });
+
   it("isolates and redacts a music failure so agent tasks remain usable", async () => {
     const fixture = createFixture();
     fixture.music.failure = new Error(
@@ -438,12 +498,14 @@ describe("TuiController", () => {
 interface FixtureOptions {
   model?: string;
   providerId?: string;
+  session?: SessionState;
 }
 
 function createFixture(options: FixtureOptions = {}) {
   const runtime = createRuntimeHarness({
     model: options.model,
     providerId: options.providerId,
+    session: options.session,
   });
   const store = new TuiStore({
     providerId: runtime.runtime.providerId,

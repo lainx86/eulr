@@ -24,6 +24,19 @@ export type ActivityStatus =
 
 export type InspectorTab = "changes" | "file" | "output" | "answer";
 export type FocusTarget = "activity" | "inspector" | "input" | "music";
+export type IdleView = "welcome" | "status";
+
+export interface RuntimeStatusUiState {
+  authenticationMethod?: "chatgpt" | "api-key";
+  account?: string;
+  plan?: string;
+  permissionMode: "ask" | "auto";
+  sessionStatus: "active" | "completed" | "failed" | "cancelled";
+  contextWindow?: number;
+  estimatedContextTokens: number;
+  activeMessages: number;
+  compactedMessages: number;
+}
 
 export interface ActivityItem {
   id: string;
@@ -119,6 +132,7 @@ export interface MusicUiState {
 export interface ModelCatalogItem {
   id: string;
   name?: string;
+  contextWindow?: number;
   defaultReasoningEffort?: ReasoningEffort;
   supportedReasoningEfforts?: ReasoningEffortInfo[];
 }
@@ -142,6 +156,8 @@ export interface TuiState {
   cwd: string;
   sessionId: string;
   version: string;
+  idleView: IdleView;
+  runtimeStatus: RuntimeStatusUiState;
   phase: RunPhase;
   task?: string;
   queuedFollowUp?: string;

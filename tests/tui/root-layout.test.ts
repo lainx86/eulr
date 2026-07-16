@@ -85,6 +85,51 @@ describe("RootLayout rendering", () => {
     expect(output).toContain("Authenticate a provider");
   });
 
+  it("replaces get started with a rich status panel while idle", () => {
+    const store = createStore();
+    const session = {
+      ...sessionState(),
+      usage: {
+        inputTokens: 12_400,
+        outputTokens: 830,
+        cachedInputTokens: 4_200,
+      },
+    };
+    store.setModelCatalog("fake-provider", [
+      { id: "fake-model", contextWindow: 258_000 },
+      { id: "other-model", contextWindow: 128_000 },
+    ]);
+    store.showIdleStatus({
+      session,
+      authentication: {
+        method: "chatgpt",
+        account: "person@example.test",
+        plan: "plus",
+      },
+      autoApprove: false,
+      contextWindow: 258_000,
+    });
+
+    const before = renderRoot(createStore(), 160, 46).split("\n");
+    const after = renderRoot(store, 160, 46).split("\n");
+    const output = after.join("\n");
+
+    expect(output).toContain("Runtime status");
+    expect(output).toContain("Model");
+    expect(output).toContain("Directory");
+    expect(output).toContain("Permissions");
+    expect(output).toContain("ask for approval");
+    expect(output).toContain("person@example.test (Plus)");
+    expect(output).toContain("12K in");
+    expect(output).toContain("258K");
+    expect(output).toContain("Available models");
+    expect(output).not.toContain("Get started");
+    expect(findLine(after, "eulr ›")).toBe(findLine(before, "eulr ›"));
+    expect(findLine(after, "EULR COMPANION")).toBe(
+      findLine(before, "EULR COMPANION"),
+    );
+  });
+
   it("places input help below the field and above the persistent dock", () => {
     const store = createStore();
     const lines = renderRoot(store, 140, 42).split("\n");
