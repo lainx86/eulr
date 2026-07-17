@@ -1,425 +1,444 @@
-# Arsitektur Agent eulr
+# Arsitektur eulr
 
-Dokumen ini menjelaskan execution path agent yang benar-benar dipakai oleh executable
-`eulr` saat ini. Sumber kebenarannya adalah kode produksi di `src/`; nama file,
-class, dan function dicantumkan agar setiap klaim utama dapat ditelusuri. Test,
-README, nama file, dan komentar tidak dipakai sebagai bukti bila komponennya tidak
-terhubung ke runtime.
-
-## Status implementasi
-
-Istilah berikut dipakai secara konsisten:
-
-- **Implemented**: komponen terhubung ke execution path produksi dan mempunyai
-  perilaku nyata yang dapat ditelusuri dari source.
-- **Partially implemented**: komponen dipakai di produksi, tetapi cakupan atau
-  jaminannya terbatas.
-- **Not found**: tidak ditemukan implementasi yang digunakan oleh execution path
-  produksi.
+Dokumen ini menjelaskan arsitektur runtime `eulr` berdasarkan execution path yang
+digunakan oleh source code saat ini. Fokusnya adalah perjalanan sebuah instruksi
+pengguna dari CLI atau TUI, melalui agent loop dan model provider, sampai tool
+dijalankan dan respons akhir ditampilkan.
 
 ## 1. Gambaran umum
 
-`eulr` adalah agent loop yang provider-neutral. CLI atau TUI menerima instruksi,
-`Agent` meneruskannya ke `AgentLoop`, lalu loop menyusun context, meminta model
-memilih antara respons teks dan tool call, menjalankan tool yang dipilih secara
-berurutan, memasukkan hasil tool ke history, dan memanggil model lagi. Loop berhenti
-ketika satu respons model selesai tanpa tool call, terjadi cancellation/error, atau
-batas turn tercapai. Implementasi pusatnya adalah `AgentLoop.runTask()` di
-`src/agent/loop.ts`; `Agent` di `src/agent/agent.ts` hanya facade yang menyimpan state
-session terkini.
+`eulr` membagi runtime ke beberapa boundary utama:
 
-Agent core tidak mengimpor tipe wire dari OpenAI SDK atau Codex. Kontrak internal
-`ModelProvider`, `ModelRequest`, dan `ModelEvent` berada di
-`src/providers/provider.ts`. Adapter provider mengubah message dan event internal
-ke/dari protocol masing-masing. Kontrak message serializable berada di
-`src/agent/messages.ts`.
+- CLI dan TUI menerima input serta merender event agent.
+- `Agent` menjadi facade untuk menjalankan task pada sebuah session.
+- `AgentLoop` mengatur percakapan multi-turn antara model dan tool.
+- `ModelProvider` menormalkan perbedaan protocol model.
+- `ToolRegistry` menyediakan definisi, validasi, permission, dan eksekusi tool.
+- `ContextManager` memilih history aktif dan memicu compaction.
+- `SessionService` menyimpan seluruh perubahan state sebagai event JSONL.
 
-State percakapan tidak hanya berada di memory. `SessionService` dan `SessionStore`
-di `src/sessions/session-service.ts` dan `src/sessions/store.ts` menulis event
-append-only ke JSONL, kemudian `reconstructSession()` di `src/sessions/state.ts`
-membangun ulang state saat load atau resume.
+Pusat alurnya adalah `AgentLoop.runTask()` di `src/agent/loop.ts`. Setiap task
+dimulai dengan user message, dilanjutkan oleh satu atau lebih model turn, dan
+berakhir ketika model memberikan respons tanpa tool call. Jika model meminta tool,
+hasil eksekusinya dimasukkan kembali ke history sebelum model dipanggil lagi.
+
+Agent core menggunakan tipe internal dari `src/providers/provider.ts` dan
+`src/agent/messages.ts`. Detail request, response, streaming event, dan credential
+provider ditangani di luar core oleh implementasi provider, adapter wire protocol,
+dan `AuthService`.
 
 ## 2. Komponen utama
 
-| Lapisan          | Implementasi produksi                                                                                                     | Tanggung jawab aktual                                                               | Status                                                                 |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Entry point      | `src/index.ts`, `src/cli/main.ts`                                                                                         | Memproses command, membuat service, memilih plain/TUI, dan merakit runtime          | **Implemented**                                                        |
-| Input plain      | `parseArgs()` di `src/cli/args.ts`, `runInteractive()` di `src/cli/interactive.ts`                                        | One-shot argument, REPL, slash command, dan signal cancellation                     | **Implemented**                                                        |
-| Input TUI        | `TuiController` di `src/tui/tui-controller.ts`, `TuiApp` di `src/tui/app.tsx`                                             | Submit task/command, satu queued follow-up, focus dan rendering retained state      | **Implemented**                                                        |
-| UI bridge        | `AgentTuiEventBridge`, `TuiPermissionBroker` di `src/tui/event-bridge.ts`                                                 | Memetakan `AgentEvent` provider-neutral ke store TUI dan permission prompt          | **Implemented**                                                        |
-| Agent facade     | `Agent` di `src/agent/agent.ts`                                                                                           | Mendelegasikan run/compact dan menyegarkan cached session state                     | **Implemented**                                                        |
-| Agent loop       | `AgentLoop` di `src/agent/loop.ts`                                                                                        | Multi-turn model/tool loop, stream collection, persistence, dan lifecycle status    | **Implemented**                                                        |
-| Prompt           | `createSystemPrompt()` di `src/agent/system-prompt.ts`, `ProjectInstructionLoader` di `src/agent/project-instructions.ts` | Prompt internal, canonical cwd, root `AGENTS.md`, dan context summary               | **Implemented**                                                        |
-| Context          | `ContextManager` di `src/agent/context-manager.ts`, `compactContext()` di `src/agent/compaction.ts`                       | Memilih active history, estimasi ukuran, dan model-generated compaction             | Compaction **Implemented**; token accounting **Partially implemented** |
-| Provider         | `ProviderRegistry` dan dua provider di `src/providers/`                                                                   | Pemilihan provider statis, model catalog, request, streaming, dan normalisasi error | **Implemented**                                                        |
-| Auth/config      | `AuthService`, `CredentialStore`, `ConfigStore` di `src/auth/` dan `src/config/`                                          | OAuth/API key, token refresh, credential/config persistence                         | **Implemented**                                                        |
-| Tool system      | `ToolRegistry` di `src/tools/registry.ts` dan `read`, `write`, `edit`, `bash`                                             | Definition, Zod validation, permission request, execution, dan normalized result    | **Implemented**                                                        |
-| Permission       | `PermissionManager` di `src/permissions/permission-manager.ts`                                                            | Auto-allow read, prompt protected operations, `--yes`, dan approval per runtime     | **Implemented**                                                        |
-| Security helpers | `resolveWorkspacePath()` dan `analyzeCommandRisk()`                                                                       | Boundary file path serta klasifikasi command berisiko                               | **Partially implemented** sebagai security boundary keseluruhan        |
-| Session          | `SessionService`, `SessionStore`, `reconstructSession()`                                                                  | Event JSONL, reconstruction, resume, usage, compaction, dan status                  | **Implemented**                                                        |
+| Komponen               | Implementasi                                                      | Tanggung jawab                                                                     |
+| ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Entry point            | `src/index.ts`, `src/cli/main.ts`                                 | Memproses argument, membuat service, memilih mode terminal, dan merakit runtime    |
+| Input plain            | `src/cli/args.ts`, `src/cli/interactive.ts`                       | One-shot task, interactive prompt, slash command, dan cancellation                 |
+| Input TUI              | `src/tui/app.tsx`, `src/tui/tui-controller.ts`                    | Input retained TUI, task submission, command handling, dan queued follow-up        |
+| UI event bridge        | `src/tui/event-bridge.ts`, `src/tui/runtime-bindings.ts`          | Mengubah event agent menjadi state TUI dan meneruskan permission response          |
+| Agent facade           | `src/agent/agent.ts`                                              | Menjalankan task, melakukan compaction, dan menjaga cached session state           |
+| Agent loop             | `src/agent/loop.ts`                                               | Model turn, stream collection, tool round-trip, persistence, dan lifecycle task    |
+| Prompt dan instruction | `src/agent/system-prompt.ts`, `src/agent/project-instructions.ts` | System prompt, workspace context, root `AGENTS.md`, dan compacted summary          |
+| Context                | `src/agent/context-manager.ts`, `src/agent/compaction.ts`         | Active history, estimasi context, safe compaction boundary, dan summary generation |
+| Provider               | `src/providers/provider.ts`, `src/providers/registry.ts`          | Kontrak provider-neutral dan pemilihan implementasi provider                       |
+| Tools                  | `src/tools/tool.ts`, `src/tools/registry.ts`                      | Kontrak tool, JSON Schema, Zod validation, permission, dan eksekusi                |
+| Permission             | `src/permissions/permission-manager.ts`                           | Keputusan read, write, execute, sensitive-read, dan high-risk-execute              |
+| Session                | `src/sessions/session-service.ts`, `src/sessions/store.ts`        | Append event, reconstruction, resume, usage, compaction, dan status session        |
+| Auth dan config        | `src/auth/`, `src/config/`                                        | Credential, token refresh, provider/model default, dan data paths                  |
 
-Music service di `src/music/` berjalan sebagai subsystem TUI yang independen. Ia
-dibuat oleh `main()` dan diteruskan ke `runTui()` di `src/cli/main.ts`, tetapi tidak
-ikut memilih tindakan agent, tidak masuk ke `AgentLoop`, dan tidak menjadi tool.
+## 3. Entry point dan inisialisasi runtime
 
-## 3. Entry point dan inisialisasi
+Executable dimulai dari `src/index.ts`. File ini memanggil `main()` dari
+`src/cli/main.ts` dan memakai nilai kembalian tersebut sebagai process exit code.
 
-1. Executable dimulai dari shebang `src/index.ts`, lalu menetapkan
-   `process.exitCode` dari hasil `main()` di `src/cli/main.ts`.
-2. `main()` memanggil `parseArgs()` (`src/cli/args.ts`) dan membuat data paths,
-   `ConfigStore`, `CredentialStore`, `AuthService`, `SessionStore`,
-   `SessionService`, prompt service, dan `CancellationCoordinator`.
-3. Command top-level seperti auth, model listing, atau session listing ditangani
-   sebelum agent runtime dibuat oleh branch command di `main()`.
-4. Untuk task atau interactive mode, `createRuntime()` di `src/cli/main.ts`
-   memuat config/session, memilih provider dan model, lalu membuat atau me-resume
-   session. Resume memvalidasi provider dan canonical working directory session.
-5. `createProvider()` membuat `OpenAICodexProvider` dan
-   `OpenAICompatibleProvider`, mendaftarkannya ke `ProviderRegistry`, lalu mengambil
-   provider aktif berdasarkan ID. Registry ini statis; tidak ada dynamic plugin
-   discovery pada path ini.
-6. `createRuntime()` membuat `PermissionManager`, default `ToolRegistry`,
-   `ContextManager`, `AgentLoop`, lalu `Agent`. Empat tool default berasal dari
-   `createDefaultToolRegistry()` di `src/tools/registry.ts`.
-7. Bila stdin/stdout mendukung TUI dan `--plain` tidak dipakai, `main()` memasang
-   `AgentTuiEventBridge`, `TuiPermissionBroker`, `TuiController`, dan memanggil
-   `runTui()` di `src/tui/tui-runtime.tsx`. Selain itu, one-shot memanggil
-   `Agent.run()` langsung dan plain REPL memakai `runInteractive()`.
+`main()` melakukan inisialisasi dalam urutan berikut:
 
-Urutan pemilihan provider bukan keputusan agent. `selectProvider()` di
-`src/config/config-store.ts`, bersama logic resume di `createRuntime()`, memakai
-provider session yang di-resume atau prioritas CLI, config, environment, lalu
-satu-satunya provider yang dianggap ready berdasarkan credential lokal oleh
-`AuthService.readyProviderIds()`. Pemeriksaan ini bukan validasi credential ke
-server. Tidak ada fallback otomatis ke provider atau metode billing lain setelah
-request gagal.
+1. `parseArgs()` di `src/cli/args.ts` mengubah command-line arguments menjadi
+   command dan options internal.
+2. `getEulrPaths()` di `src/config/data-paths.ts` menentukan lokasi config,
+   credential, dan session.
+3. `ConfigStore`, `CredentialStore`, `AuthService`, `SessionStore`, dan
+   `SessionService` dibuat untuk command aktif.
+4. Command top-level seperti auth, model listing, dan session listing diproses oleh
+   branch command di `main()`.
+5. Untuk task atau interactive mode, `createRuntime()` di `src/cli/main.ts` memuat
+   config, memilih provider/model, membuat atau me-resume session, lalu merakit
+   permission manager, tool registry, context manager, agent loop, dan agent facade.
 
-## 4. Alur input sampai respons akhir
+Provider dipilih oleh logic di `createRuntime()` bersama `selectProvider()` dari
+`src/config/config-store.ts`. Saat session di-resume, provider dan working directory
+dari session digunakan kembali. Untuk session baru, selection mempertimbangkan CLI,
+config, environment, dan readiness credential lokal.
 
-Semua jalur input task bertemu di `Agent.run()`:
+Model dipilih dari request CLI, resumed session, default model provider di config,
+atau `EULR_MODEL`. `resolveModel()` di `src/cli/main.ts` mengambil metadata model
+yang diperlukan untuk menentukan context window dan reasoning options.
 
-- One-shot: branch task di `main()` (`src/cli/main.ts`).
-- Plain interactive: `runInteractive()` (`src/cli/interactive.ts`).
-- TUI: `TuiController.startRun()`/`executeRun()`
-  (`src/tui/tui-controller.ts`).
+Setelah provider dan model tersedia, `createRuntime()` membuat:
 
-Alur aktual satu task adalah:
+- `PermissionManager` dari `src/permissions/permission-manager.ts`;
+- empat tool default melalui `createDefaultToolRegistry()`;
+- `ContextManager` dengan catalog context window bila tersedia atau default 100.000
+  token;
+- `AgentLoop` dengan provider, model, session service, tools, permissions, context,
+  dan event callback;
+- `Agent` dengan session state awal.
 
-1. `Agent.run()` memanggil `AgentLoop.runTask()` dengan `SessionState` dan
-   `AbortSignal` (`src/agent/agent.ts`).
-2. `runTask()` emit `task_started`, memvalidasi provider session, mengubah status
-   menjadi `active`, menyimpan user message, lalu reload state dari session store
-   (`src/agent/loop.ts`).
-3. Pada setiap model turn, loop memeriksa root `AGENTS.md` melalui
-   `ProjectInstructionLoader.load()`, membuat system prompt, dan memeriksa apakah
-   context perlu dikompaksi. Loader memakai signature stat file sebagai cache dan
-   membaca ulang content hanya saat file berubah.
-4. `collectResponse()` memanggil `provider.stream()` dengan model, optional
-   reasoning effort, system prompt, active messages, definitions semua tool, dan
-   session ID.
-5. Event stream dinormalisasi menjadi text delta, reasoning delta, opaque provider
-   item, tool call fragments, usage, dan `done`. Text langsung diteruskan sebagai
-   `AgentEvent`; reasoning verbatim tidak diteruskan ke renderer.
-6. Assistant message dan usage disimpan sebelum tool dijalankan. Jika stream gagal
-   setelah menghasilkan content, catch path di `AgentLoop.runTask()` mengambil
-   partial response dari error lalu memakai `persistAssistant()` untuk menyimpan
-   bagian yang sudah terkumpul.
-7. Bila tidak ada tool call, loop menandai session `completed`, emit
-   `task_completed`, dan mengembalikan text dari model turn terakhir.
-8. Bila ada tool call, `executeToolCall()` memvalidasi protocol/JSON, lalu
-   `ToolRegistry.execute()` melakukan schema validation, permission, dan execution.
-9. Tool execution start/finish dan role `tool` message disimpan. Hasil sukses,
-   error validasi, unknown tool, permission denial, dan ordinary execution failure
-   masuk kembali ke history agar dapat dilihat model pada turn berikutnya.
-10. Loop mengulang dari penyusunan context sampai kondisi berhenti terpenuhi.
-11. Plain renderer di `src/cli/renderer.ts` atau TUI bridge di
-    `src/tui/event-bridge.ts` menampilkan lifecycle, text, tool, dan usage event.
+## 4. Jalur input pengguna
 
-TUI menerima satu queued follow-up ketika run aktif, tetapi implementasinya di
-`TuiController.submit()` baru memulai follow-up setelah seluruh run aktif selesai,
-bukan menyisipkannya pada boundary tool/model di dalam run yang sama.
+Ada tiga jalur task yang semuanya bertemu di `Agent.run()` dari
+`src/agent/agent.ts`:
 
-## 5. Reasoning dan penentuan tindakan
+### One-shot
 
-### Yang diimplementasikan
+Untuk pemanggilan seperti `eulr "periksa test"`, `main()` memilih jalur sesuai mode
+terminal. Jika TUI aktif, task diteruskan sebagai `initialTask` ke `runTui()` dan
+dijalankan melalui `TuiController`. Pada plain mode, branch one-shot di
+`src/cli/main.ts` memanggil `runtime.agent.run(task, { signal })` secara langsung dan
+menampilkan stream melalui `TerminalRenderer` di `src/cli/renderer.ts`.
 
-`eulr` tidak mempunyai planner atau reasoning engine lokal. Penalaran dan pemilihan
-tindakan didelegasikan ke model. `AgentLoop.collectResponse()` memberi model prompt,
-history aktif, dan `ToolRegistry.definitions()`; model lalu memilih untuk mengirim
-text atau function/tool call. Kedua adapter mengaktifkan pemilihan tool otomatis:
-`buildResponsesRequest()` di `src/providers/adapters/responses.ts` dan request Chat
-Completions di `src/providers/openai-compatible.ts` memakai `tool_choice: "auto"`.
+### Plain interactive
 
-Untuk `openai-codex`, reasoning effort dipilih saat runtime dibuat di
-`createRuntime()` dan diteruskan dalam `ModelRequest`. Mapping effort provider berada
-di `src/providers/reasoning.ts`; adapter Responses di
-`src/providers/adapters/responses.ts` membentuk request reasoning. Path
-`openai-compatible` tidak menerima reasoning effort dari `createRuntime()`.
+`runInteractive()` di `src/cli/interactive.ts` membaca input menggunakan readline.
+Input yang diawali `/` diteruskan ke interactive command handler. Input lainnya
+menjadi instruksi baru untuk `Agent.run()` pada session aktif.
 
-`reasoning_delta` dari provider dikumpulkan sebagai `AssistantContent` bertipe
-`reasoning` dan disimpan oleh `persistAssistant()` di `src/agent/loop.ts`. Renderer
-hanya menerima status generik `thinking`, sehingga reasoning text tidak ditampilkan
-verbatim. Codex encrypted reasoning item juga disimpan sebagai JSON-safe
-`provider_item` dan direplay oleh adapter Responses; adapter Chat Completions di
-`src/providers/adapters/chat-completions.ts` tidak mereplay reasoning/provider item.
+### TUI
 
-### Yang tidak diimplementasikan
+`TuiApp` di `src/tui/app.tsx` meneruskan submit ke `TuiController.submit()` di
+`src/tui/tui-controller.ts`. Controller membedakan slash command dan task biasa,
+lalu menjalankan task melalui `TuiController.executeRun()`. Ketika sebuah run masih
+aktif, controller dapat menyimpan satu follow-up dan menjalankannya setelah run
+tersebut selesai.
 
-Tidak ditemukan local action scorer, rule-based planner, task graph, reflection
-engine, verifier terpisah, atau policy yang menimpa pilihan tool model. Tool registry
-hanya membatasi nama/schema/permission. Jadi kalimat "agent memilih tindakan" pada
-arsitektur ini berarti model menghasilkan tool call, bukan core TypeScript membuat
-keputusan semantik sendiri.
+Ketiga jalur memakai `CancellationCoordinator` dari `src/cli/interactive.ts` untuk
+membuat `AbortSignal` bagi operasi yang sedang aktif.
 
-## 6. Agent loop dan kondisi berhenti
+## 5. Alur agent dari input sampai respons
 
-`AgentLoop.runTask()` di `src/agent/loop.ts` mempunyai default maksimum 50 model
-turn. Nilai dapat diinjeksi lewat constructor, tetapi `createRuntime()` tidak
-menyediakan CLI/config untuk mengubahnya.
+`Agent.run()` mendelegasikan pekerjaan ke `AgentLoop.runTask()` dan memperbarui
+cached session state dari hasil loop. Alur satu task adalah:
 
-| Kondisi                                            | Perilaku aktual                                                                   |
-| -------------------------------------------------- | --------------------------------------------------------------------------------- |
-| Stream menghasilkan `done` dan tidak ada tool call | Session `completed`; return final text                                            |
-| Stream menghasilkan satu atau lebih tool call      | Semua call dieksekusi berurutan; hasil ditambahkan; lanjut turn berikutnya        |
-| Turn mencapai 50                                   | Melempar `ProviderError` dan menandai task `failed`                               |
-| `AbortSignal` dibatalkan                           | Menandai `cancelled`, flush session, lalu melempar `CancellationError`            |
-| Provider/protocol error                            | Menyimpan partial assistant bila ada, menandai `failed`, lalu error dipropagasi   |
-| Tool ordinary error atau permission ditolak        | Menjadi error tool result; model diberi kesempatan menangani pada turn berikutnya |
-| Tool cancellation                                  | Membatalkan task, bukan menjadi ordinary tool result                              |
+1. Loop memeriksa cancellation dan memastikan provider runtime sama dengan provider
+   session.
+2. Session diubah ke status `active` bila diperlukan.
+3. Instruksi disimpan sebagai `AgentMessage` dengan role `user` melalui
+   `SessionService.addMessage()`.
+4. Pada awal setiap model turn, loop memeriksa root `AGENTS.md`, menyusun system
+   prompt, dan mengambil message yang masih aktif dari `ContextManager`.
+5. Bila ukuran context melewati threshold dan ada safe message boundary,
+   `compactContext()` membuat summary sebelum request utama diteruskan.
+6. `collectResponse()` memanggil `ModelProvider.stream()` dan mengonsumsi normalized
+   `ModelEvent` satu per satu.
+7. Text delta langsung di-emit ke renderer. Reasoning, provider item, tool-call
+   fragment, usage, dan final marker dikumpulkan di dalam `CollectedResponse`.
+8. Text, reasoning, provider item, dan tool call disimpan sebagai assistant message.
+   Usage disimpan sebagai `usage_updated` event, sedangkan final marker dipakai untuk
+   memastikan stream selesai.
+9. Jika respons tidak berisi tool call, session ditandai `completed`,
+   `task_completed` di-emit, dan text dari model turn terakhir dikembalikan sebagai
+   final response.
+10. Jika respons berisi tool call, setiap call dijalankan secara berurutan melalui
+    `executeToolCall()`.
+11. Tool result disimpan sebagai role `tool`, session di-reload, lalu loop memulai
+    model turn berikutnya dengan history yang sudah memuat hasil tersebut.
 
-Provider menormalisasi `done.finishReason`, tetapi `applyModelEvent()` di core hanya
-mencatat flag `sawDone`; finish reason dibuang dan tidak dipakai sebagai stop policy.
-Loop hanya mensyaratkan adanya event `done` dan memeriksa ada/tidaknya tool call.
-Respons selesai tanpa tool call dianggap final walaupun text kosong. Tool call pada
-turn ke-50 masih dapat dijalankan sebelum limit error terjadi.
+Runtime memakai batas default 50 model turn per task. Batas ini ditetapkan oleh
+`DEFAULT_MAX_TURNS` dan constructor `AgentLoop` di `src/agent/loop.ts`.
 
-Walaupun request provider mengizinkan `parallel_tool_calls`, `runTask()` menggunakan
-ordinary `for (const call ...)` dengan `await executeToolCall()` di dalamnya.
-Multiple calls didukung, tetapi execution-nya selalu sequential.
+## 6. Reasoning dan pemilihan tindakan
 
-## 7. Pemanggilan provider
+Reasoning dan pemilihan tindakan berlangsung pada model provider. Agent core
+menyiapkan informasi yang diperlukan model melalui `collectResponse()`:
 
-`ModelProvider` di `src/providers/provider.ts` mendefinisikan `listModels()` dan
-`stream()` sebagai boundary core. `ProviderRegistry` di
-`src/providers/registry.ts` menolak ID duplikat dan melakukan lookup, tetapi runtime
-hanya mendaftarkan dua implementasi berikut.
+- system prompt;
+- active message history;
+- daftar tool beserta JSON Schema input;
+- model aktif;
+- reasoning effort untuk provider Codex;
+- session ID.
 
-Model dipilih di `createRuntime()` dengan prioritas request/CLI, model dari resumed
-session, default provider di config, lalu `EULR_MODEL` melalui `selectModel()` di
-`src/config/config-store.ts`. `resolveModel()` di `src/cli/main.ts` mengharuskan
-configured model untuk `openai-compatible`, sehingga normal inference path tidak
-perlu mengambil catalog. Untuk Codex, ia memakai authenticated, filtered catalog dan
-memilih entry pertama bila tidak ada explicit model. Catalog cache Codex di
-`OpenAICodexProvider` hanya in-memory selama instance provider itu hidup.
+Adapter Responses di `src/providers/adapters/responses.ts` dan request Chat
+Completions di `src/providers/openai-compatible.ts` memakai tool choice otomatis.
+Model kemudian menghasilkan salah satu atau kombinasi dari text, reasoning event,
+dan tool call. `AgentLoop` tidak menentukan isi tindakan secara semantik; tanggung
+jawabnya adalah memvalidasi protocol event, menjalankan tool yang disebut model, dan
+mengembalikan hasilnya ke model.
 
-### `openai-codex`
+Untuk `openai-codex`, reasoning effort dipilih melalui logic di `src/cli/main.ts`
+dan mapping `src/providers/reasoning.ts`. Adapter Responses mengirim effort tersebut
+bersama `summary: "auto"`.
 
-`OpenAICodexProvider` di `src/providers/openai-codex.ts`:
+`reasoning_delta` dikumpulkan dan disimpan sebagai assistant content bertipe
+`reasoning`, tetapi renderer menerima status `thinking` alih-alih reasoning text
+verbatim. Codex juga dapat mengirim encrypted reasoning item. Item ini disimpan
+sebagai `provider_item` yang JSON-safe dan dimasukkan kembali oleh
+`toResponsesInput()` pada request Codex berikutnya.
 
-- Mengubah `AgentMessage` ke Codex Responses request melalui
-  `src/providers/adapters/responses.ts`.
-- Mengirim native `fetch` ke Codex backend dan membaca SSE.
-- Mengirim bearer credential eulr serta account/session routing headers melalui
-  request helper provider.
-- Menormalisasi text, reasoning, encrypted provider item, tool call, usage, dan
-  completion ke `ModelEvent`.
-- Mengirim `store: false` melalui `buildResponsesRequest()`, sehingga continuity
-  durable berasal dari JSONL/message replay lokal, bukan server-side response store.
-- Melakukan retry terbatas untuk network error dan HTTP 5xx sebelum stream dimulai,
-  serta satu forced token refresh setelah 401. Stream yang sudah berjalan tidak
-  di-resume.
+## 7. Message dan system prompt
 
-Credential diperoleh melalui `AuthService.getValidChatGPTCredential()` di
-`src/auth/auth-service.ts`. Refresh memakai in-process single-flight dan lock
-credential store; `CredentialStore` di `src/auth/credential-store.ts` menyimpan
-credential milik eulr secara atomic dengan mode file POSIX. Credential adalah JSON
-plaintext yang permission-protected, bukan encrypted keychain storage.
+Message internal didefinisikan di `src/agent/messages.ts`:
 
-### `openai-compatible`
+- role `user` menyimpan instruksi pengguna;
+- role `assistant` menyimpan text, reasoning, provider item, dan tool call;
+- role `tool` menyimpan call ID, nama tool, content, dan status error.
+
+Semua bentuk message merupakan object serializable. Agent core tidak menyimpan SDK
+object di dalam session.
+
+`createSystemPrompt()` di `src/agent/system-prompt.ts` menyusun prompt dari:
+
+1. `BASE_SYSTEM_PROMPT` milik eulr;
+2. canonical working directory session;
+3. project instruction dari root `AGENTS.md` bila ada;
+4. context summary hasil compaction bila ada.
+
+`ProjectInstructionLoader` di `src/agent/project-instructions.ts` memeriksa
+`<cwd>/AGENTS.md` pada setiap model turn. Loader membandingkan device, inode, size,
+dan modification time dengan cache. Content dibaca ulang ketika signature berubah,
+dibatasi sampai 32 KiB, dan canonical path-nya harus berada di dalam workspace.
+
+## 8. Context management dan compaction
+
+`ContextManager` di `src/agent/context-manager.ts` menentukan message yang dikirim
+ke provider. `messagesForRequest()` mengambil history mulai dari
+`compactedMessageCount`, sehingga message yang sudah dirangkum tidak dikirim ulang
+sebagai raw history.
+
+Ukuran context dihitung dari nilai terbesar antara:
+
+- estimasi lokal berdasarkan jumlah karakter message dan system prompt; dan
+- input token usage dari model turn sebelumnya dalam task yang sama.
+
+Default context window adalah 100.000 token dengan threshold compaction 80 persen
+dan delapan recent messages yang dipertahankan. Saat catalog model menyediakan
+context window, `createRuntime()` menggunakan nilai model tersebut.
+
+`selectForCompaction()` memilih prefix history pada boundary user message dan
+memastikan pasangan tool call/tool result di dalam prefix tetap konsisten.
+`compactContext()` di `src/agent/compaction.ts` lalu membuat request khusus ke
+provider yang sama dengan:
+
+- compaction system prompt;
+- previous summary bila ada;
+- selected history dalam bentuk JSON;
+- daftar tool kosong.
+
+Summary yang berhasil disimpan sebagai `context_compacted` event bersama jumlah
+message yang telah dirangkum. Raw event lama tetap berada di JSONL; summary dan
+`compactedMessageCount` mengatur bentuk context pada request berikutnya. Command
+`/compact` memanggil jalur yang sama melalui `Agent.compact()`.
+
+## 9. Provider dan model request
+
+Boundary provider berada di `src/providers/provider.ts`. `ModelProvider` menyediakan
+dua operasi:
+
+- `listModels()` untuk catalog model;
+- `stream()` untuk menghasilkan `AsyncIterable<ModelEvent>`.
+
+`AgentLoop.collectResponse()` membuat `ModelRequest` yang berisi model, reasoning
+effort, system prompt, active messages, tool definitions, dan session ID. Provider
+adapter mengubah request ini ke format wire provider, kemudian menormalkan response
+menjadi event internal seperti `text_delta`, `reasoning_delta`, `tool_call_start`,
+`tool_call_delta`, `tool_call_end`, `usage`, dan `done`.
+
+### OpenAI Codex
+
+`OpenAICodexProvider` di `src/providers/openai-codex.ts` menggunakan native `fetch`
+dan Codex Responses SSE. Request body dibuat oleh `buildResponsesRequest()` di
+`src/providers/adapters/responses.ts`. Request menggunakan streaming, automatic tool
+choice, parallel tool-call capability, encrypted reasoning inclusion, prompt cache
+key berbasis session, dan `store: false`.
+
+Sebelum request, provider mengambil ChatGPT credential melalui
+`AuthService.getValidChatGPTCredential()` di `src/auth/auth-service.ts`. Credential
+yang mendekati expiry di-refresh dan hasilnya disimpan kembali oleh
+`CredentialStore` di `src/auth/credential-store.ts`. Request menyertakan account dan
+session routing metadata yang diperlukan transport Codex.
+
+SSE dinormalisasi oleh `src/providers/adapters/responses.ts`. Stream harus mencapai
+completion event agar agent turn dianggap lengkap. Provider melakukan retry terbatas
+untuk network error dan HTTP 5xx sebelum streaming dimulai, serta satu forced token
+refresh setelah respons 401.
+
+### OpenAI-compatible
 
 `OpenAICompatibleProvider` di `src/providers/openai-compatible.ts` menggunakan
-official OpenAI SDK dengan Chat Completions streaming. Adapter
-`src/providers/adapters/chat-completions.ts` membentuk history text/tool. Pada
-production wiring, API key berasal dari `EULR_API_KEY` atau credential API yang
-disimpan dan diambil melalui `AuthService.getApiCredential()`; `createProvider()`
-tidak memasok constructor option `apiKey`. Retry default diserahkan ke SDK melalui
-`maxRetries`; tidak ada unified retry policy di `AgentLoop`.
+official OpenAI JavaScript SDK dengan Chat Completions streaming. History diubah
+oleh `src/providers/adapters/chat-completions.ts`, sedangkan tool definitions
+diteruskan sebagai function tools.
 
-Kedua provider harus menghasilkan event `done`. `collectResponse()` memvalidasi
-urutan tool call fragments dan menolak duplicate/unknown/ended call IDs atau stream
-tanpa final event sebagai `ProviderError`.
+Pada production runtime, API key berasal dari `EULR_API_KEY` atau credential yang
+disimpan melalui `AuthService`. Base URL dipilih oleh
+`src/config/config-store.ts` dengan urutan config, `EULR_BASE_URL`, lalu base URL dari
+stored API credential. Streaming text, tool argument delta, usage, dan finish event
+dinormalisasi menjadi `ModelEvent` yang sama dengan provider Codex.
 
-## 8. Tool discovery, validasi, dan eksekusi
+## 10. Tool registry dan eksekusi
 
-Kontrak `Tool`, `ToolResult`, dan `ToolExecutionContext` ada di
-`src/tools/tool.ts`. Production registry dibuat oleh
-`createDefaultToolRegistry()` di `src/tools/registry.ts` dan berisi tepat:
+Kontrak tool berada di `src/tools/tool.ts`. Setiap tool mempunyai:
 
-- `read` (`src/tools/read.ts`): membaca text dengan optional line range, binary
-  rejection, line numbers, dan bounded output.
-- `write` (`src/tools/write.ts`): membuat parent, atomic whole-file write, dan
-  metadata before/after untuk UI.
-- `edit` (`src/tools/edit.ts`): exact-text replacement, ambiguity check, atomic
-  write, dan change metadata.
-- `bash` (`src/tools/bash.ts`): menjalankan system shell via `spawn`, stream
-  stdout/stderr, timeout, cancellation, exit metadata, dan bounded head/tail output.
+- nama dan deskripsi;
+- Zod input schema;
+- permission dasar;
+- `execute(input, context)` yang menghasilkan `ToolResult`.
 
-Pipeline aktual `ToolRegistry.execute()` adalah:
+`createDefaultToolRegistry()` di `src/tools/registry.ts` mendaftarkan empat tool:
 
-1. Lookup tool berdasarkan nama yang diberikan model.
-2. `inputSchema.safeParseAsync()` memvalidasi argument dengan Zod.
-3. `preparePermission()` mengklasifikasikan path/command dan membuat permission
-   request.
-4. `PermissionManager.check()` memutuskan allow/deny.
-5. Tool menerima parsed input, canonical session cwd, signal, dan output callback.
-6. Registry mengembalikan normalized `ToolResult`; unexpected ordinary error
-   dibungkus sebagai `ToolExecutionError` result, sedangkan cancellation dipropagasi.
+- `read` dari `src/tools/read.ts` membaca file teks dengan line range, line numbers,
+  binary detection, dan output limit;
+- `write` dari `src/tools/write.ts` membuat parent directory dan menulis seluruh
+  file secara atomic;
+- `edit` dari `src/tools/edit.ts` melakukan exact-text replacement dan menulis hasil
+  secara atomic;
+- `bash` dari `src/tools/bash.ts` menjalankan system shell dengan `spawn`, stream
+  stdout/stderr, timeout, cancellation, dan bounded retained stdout/stderr dengan
+  head/tail preservation.
 
-Unknown tool, malformed JSON, incomplete streamed call, validation failure,
-permission denial, dan execution failure tidak membuat process crash. Logic di
-`AgentLoop.executeToolCall()` mencatat hasil error tersebut sebagai role `tool` agar
-model dapat memilih tindakan berikutnya.
+`ToolRegistry.definitions()` mengubah Zod schema menjadi JSON Schema yang dikirim ke
+model. Saat model menghasilkan tool call, pipeline eksekusinya adalah:
 
-Tidak ada dynamic tool discovery, MCP, atau plugin tool loading pada production
-path. `ToolRegistry.register()` adalah API programmatic; `createRuntime()` selalu
-memakai empat tool statis di atas.
+1. `AgentLoop.executeToolCall()` memastikan call lengkap dan argument-nya merupakan
+   JSON yang valid, atau menyiapkan error result untuk call yang tidak lengkap atau
+   malformed.
+2. Agent loop menyimpan dan memancarkan `tool_started` dengan parsed atau raw input.
+3. Bila call siap dieksekusi, `ToolRegistry.execute()` mencari tool berdasarkan nama.
+4. `inputSchema.safeParseAsync()` memvalidasi argument.
+5. `preparePermission()` membuat permission request berdasarkan tool, path, dan
+   command risk.
+6. `PermissionManager.check()` meminta atau memberikan izin.
+7. Tool dijalankan dengan parsed input, canonical cwd, `AbortSignal`, dan output
+   callback.
+8. Untuk result sukses atau ordinary error, execution finish dan role `tool` message
+   disimpan ke session. Cancellation dipropagasi; pending call tersebut
+   direkonsiliasi oleh `SessionService.resume()` ketika session dilanjutkan.
 
-## 9. Permission dan keamanan
+Malformed argument, unknown tool, validation error, permission denial, dan ordinary
+tool execution error diubah menjadi error `ToolResult`. Hasil tersebut tetap masuk
+ke conversation history sehingga model dapat menanggapinya pada turn selanjutnya.
+Beberapa tool call dalam satu model response dijalankan secara sequential sesuai
+urutan response.
 
-`PermissionManager` di `src/permissions/permission-manager.ts` memakai kategori
-`read`, `write`, `execute`, `sensitive-read`, dan `high-risk-execute` dari
-`src/permissions/types.ts`.
+## 11. Permission dan workspace
 
-- Read biasa otomatis diizinkan.
-- Write dan execute biasa meminta prompt; `--yes` mengizinkan dua kategori ini.
-- Sensitive read dan high-risk execute tidak diloloskan oleh `--yes`.
-- Pilihan allow-for-session disimpan in-memory per kategori, bukan per target.
-  High-risk approval tidak diingat. Approval tidak masuk JSONL dan hilang ketika
-  `PermissionManager` baru dibuat.
-- Plain prompt di `src/cli/prompts.ts` menolak operasi terlindungi bila bukan TTY.
-  TUI memakai `TuiPermissionBroker` dan key Y/A/N/Escape.
+Permission categories didefinisikan di `src/permissions/types.ts`:
 
-`isSensitivePath()` pada `src/permissions/permission-manager.ts`, yang dipakai oleh
-registry, mengenali pola terbatas: tepat `.env`, segment berawalan `.env.`, key
-PEM/SSH, `credentials.json`, dan `auth.json`. `analyzeCommandRisk()` di
-`src/permissions/command-risk.ts` melakukan tokenisasi heuristik dan menandai antara
-lain recursive removal yang menarget root/home, `rm --no-preserve-root`, disk
-formatting/wipe, shutdown, destructive Git commands, sensitive readers, dan fork
-bomb. Ini bukan parser shell lengkap dan high-risk command tetap dapat dijalankan
-setelah explicit approval.
+- `read`;
+- `write`;
+- `execute`;
+- `sensitive-read`;
+- `high-risk-execute`.
 
-Untuk file tools, `resolveWorkspacePath()` di `src/utils/paths.ts` memeriksa lexical
-escape, canonical real path, nearest existing parent untuk file baru, dan symlink
-escape. `ReadTool` juga membandingkan path serta inode/device setelah open;
-`WriteTool` resolve ulang setelah `mkdir`. Atomic writes memakai
-`atomicWriteFile()` di `src/utils/atomic-write.ts`.
+`PermissionManager.check()` di `src/permissions/permission-manager.ts` langsung
+mengizinkan ordinary read. Write dan normal execute meminta konfirmasi, atau
+diizinkan oleh flag `--yes`. Flag tersebut tidak meloloskan sensitive read atau
+high-risk execute. Sensitive read meminta konfirmasi kecuali kategorinya sudah
+diizinkan untuk runtime aktif. High-risk execute meminta keputusan baru untuk setiap
+operasi dan tidak dimasukkan ke session approvals.
 
-**Batas penting:** `BashTool` hanya memastikan initial `cwd` adalah canonical
-workspace. Child shell memakai inherited environment dan tidak berada dalam
-container, chroot, seccomp, filesystem sandbox, atau network sandbox. Command yang
-disetujui dapat mengakses luar workspace sejauh diizinkan OS. Karena itu workspace
-boundary adalah **Implemented untuk file tools**, tetapi security boundary agent
-secara keseluruhan hanya **Partially implemented**.
+Sensitive path classification memakai `isSensitivePath()` dari
+`src/permissions/permission-manager.ts`. Command classification memakai
+`analyzeCommandRisk()` di `src/permissions/command-risk.ts`, yang mengenali struktur
+command berisiko seperti recursive deletion pada root/home, disk formatting,
+shutdown, destructive Git operations, sensitive readers, dan fork bomb.
 
-`redactText()` di `src/auth/redaction.ts` menyensor pola credential pada error/log/UI
-tertentu. Namun raw tool arguments dan results tidak disensor secara universal
-sebelum dikirim ke model atau ditulis sebagai session event. Sensitive-read approval
-mengurangi akses tidak sengaja, tetapi bukan data-loss-prevention atau encryption.
+File tools menggunakan `resolveWorkspacePath()` di `src/utils/paths.ts`. Resolver
+mengubah workspace menjadi real path, memeriksa target yang sudah ada, mencari
+nearest existing parent untuk target baru, dan memvalidasi symlink agar target tetap
+di dalam workspace. `read`, `write`, dan `edit` menggunakan resolver yang sama.
 
-## 10. Context, history, dan session
+`bash` memulai process dengan canonical workspace sebagai `cwd`. `BashTool` memakai
+system shell, mewarisi process environment, dan mengalirkan stdout/stderr ke callback
+agent. High-risk command classification dan execute permission diterapkan sebelum
+process dibuat.
 
-### Message dan active context
+Plain permission prompt ditangani `PromptService.confirmPermission()` di
+`src/cli/prompts.ts`. Dalam TUI, request diteruskan melalui `TuiPermissionBroker` di
+`src/tui/event-bridge.ts`, sehingga prompt permission dapat ditampilkan di input
+area tanpa menghentikan rendering panel agent.
 
-`AgentMessage` di `src/agent/messages.ts` hanya berisi data serializable: user text,
-assistant content, atau tool result. `ContextManager.messagesForRequest()` di
-`src/agent/context-manager.ts` mengambil message mulai dari
-`compactedMessageCount`; summary hasil compaction dimasukkan ke system prompt oleh
-`createSystemPrompt()`.
+## 12. Session dan persistence
 
-Default `ContextManager` memakai window 100.000 token, threshold 80%, dan menjaga
-delapan message terbaru. `createRuntime()` mengganti ukuran window bila catalog model
-menyediakannya. Estimasi lokal adalah kira-kira karakter dibagi empat ditambah
-overhead per message; keputusan compaction memakai nilai maksimum antara estimasi
-lokal dan input usage dari model turn sebelumnya dalam `runTask()` yang sama. Nilai
-reported input ini dimulai ulang untuk setiap user task. Tidak ada tokenizer
-model-specific.
+Session events didefinisikan dan divalidasi dengan Zod di
+`src/sessions/events.ts`. Event mencakup:
 
-`ContextManager.selectForCompaction()` hanya memilih prefix yang berhenti pada user
-boundary dengan pasangan tool call/result yang konsisten. Automatic compaction
-menjaga recent messages; manual `/compact` memakai forced selection, tetapi tetap
-dapat no-op bila tidak ada safe boundary.
+- session creation dan status;
+- message addition;
+- tool execution start dan finish;
+- usage update;
+- context compaction;
+- model dan reasoning-effort change.
 
-### Compaction
+`SessionStore.append()` di `src/sessions/store.ts` memvalidasi event, menulis satu
+baris JSON, melakukan `datasync`, dan memakai file mode user-only pada POSIX. Append
+untuk satu session diserialisasi dalam instance store. Saat load,
+`reconstructSession()` di `src/sessions/state.ts` melipat urutan event menjadi
+`SessionState` berisi messages, tool executions, usage, summary, model, reasoning,
+dan status.
 
-`compactContext()` di `src/agent/compaction.ts` memanggil provider yang sama dengan
-prompt summary terstruktur, satu synthetic user message berisi previous summary dan
-history, serta `tools: []`. Tool call, summary kosong, atau stream tanpa `done`
-dianggap provider error. Compaction menambahkan `context_compacted` event berisi
-summary dan logical message count; history JSONL lama tidak dihapus.
+`SessionService.resume()` di `src/sessions/session-service.ts` merekonsiliasi tool
+call yang belum mempunyai role `tool` message. Bila finished execution sudah
+tersimpan, content tersebut dipakai sebagai result. Existing unfinished execution
+diberi interruption result. Tool lama tidak dieksekusi ulang selama reconstruction.
 
-### Session persistence dan resume
+Agent loop menyimpan user message sebelum model request, assistant message sebelum
+tool execution, lalu tool start/result setelah model memilih tindakan. Urutan ini
+membuat conversation serta catatan dan status eksekusi tool dapat direkonstruksi
+dari JSONL setelah process berhenti.
 
-Schema event berada di `src/sessions/events.ts`. `SessionStore.append()` memvalidasi
-event dengan Zod, mengantrikan append per instance/session, memperbaiki partial tail,
-menulis satu JSON line, melakukan `datasync`, dan memakai mode POSIX 0600. Load
-menoleransi hanya malformed partial final line; invalid complete line menimbulkan
-`SessionError`. `reconstructSession()` melipat event menjadi messages, tool
-executions, usage, summary, model/reasoning, dan status.
+## 13. Error, retry, timeout, dan cancellation
 
-`SessionService.resume()` mencari assistant tool call tanpa role `tool` result. Ia
-tidak menjalankan ulang tool tersebut. Bila finished execution sudah mempunyai
-content, result itu dipakai. Existing unfinished execution ditutup dengan synthetic
-interruption result; bila tidak ada execution record, hanya synthetic role `tool`
-message yang ditambahkan. Session lalu ditandai aktif. Repair ini terjadi saat
-explicit resume, bukan ketika `Agent.run()` sekadar refresh state setelah error.
+Error internal berada di `src/utils/errors.ts`. `AgentLoop.runTask()` membedakan
+cancellation dari failure, mengubah status session, mencoba flush store, dan
+memancarkan lifecycle event yang sudah melalui redaction.
 
-Session store hanya mempunyai in-process append queue. Tidak ditemukan cross-process
-lock untuk JSONL, encryption, schema migration, pruning/archiving, branching, atau
-remote persistence. `ConfigStore` di `src/config/config-store.ts` juga hanya memakai
-in-instance mutation queue dan tidak mempunyai cross-process lock; ini berbeda dari
-credential store yang memang memakai file lock.
+Provider error menghentikan model turn. Jika stream sudah menghasilkan assistant
+content, catch path di `AgentLoop.runTask()` mengambil partial response dari error
+dan menyimpannya melalui `persistAssistant()` sebelum status task diperbarui.
 
-`SessionStore.list()` melewati session yang log-nya tidak dapat dimuat atau
-direkonstruksi, sedangkan direct load/resume tetap melempar `SessionError`. Karena
-itu daftar session bukan laporan error korupsi yang lengkap.
+Retry berada pada implementasi provider:
 
-## 11. Error, retry, cancellation, dan timeout
+- `OpenAICodexProvider` melakukan retry terbatas untuk network error dan HTTP 5xx
+  sebelum stream, serta refresh credential sekali setelah 401;
+- `OpenAICompatibleProvider` meneruskan konfigurasi `maxRetries` ke OpenAI SDK.
 
-Error internal didefinisikan di `src/utils/errors.ts`. `AgentLoop.runTask()` mencoba
-menulis status `failed` atau `cancelled`, flush store, emit redacted lifecycle event,
-dan mempertahankan `EulrError`; unknown error dibungkus sebagai `ProviderError`.
+Tool error biasa dikembalikan sebagai tool result agar model dapat memprosesnya.
+Cancellation dipropagasi sebagai `CancellationError` dan menghentikan task.
 
-- **Provider error:** gagal task. Tidak ada retry pada `AgentLoop`. Retry terbatas
-  berada di provider: Codex untuk network/5xx sebelum stream dan forced refresh 401;
-  compatible provider mendelegasikan retry ke OpenAI SDK.
-- **Stream error:** partial assistant content disimpan bila ada. Tidak ada stream
-  reconnect/resume.
-- **Tool error:** ordinary error menjadi tool result dan tidak langsung menggagalkan
-  task. Tidak ada automatic tool retry atau rollback.
-- **Cancellation:** `CancellationCoordinator` di `src/cli/interactive.ts` mengelola
-  satu active `AbortController`. Signal diteruskan ke AgentLoop, provider,
-  compaction, permission broker, registry, dan `BashTool`.
-- **Bash timeout:** `BashTool` default 120 detik; input dibatasi maksimum 30 menit.
-  Pada timeout/abort, process group POSIX mendapat SIGTERM lalu SIGKILL setelah grace
-  period. Timeout menjadi error result; abort menjadi task cancellation.
-- **Filesystem cancellation:** registry memeriksa signal sebelum execution, tetapi
-  `read`/`write`/`edit` tidak membatalkan operasi filesystem yang sedang berlangsung
-  dan tidak memiliki timeout sendiri.
-- **Fatal/TUI cleanup:** `runTui()` dan terminal lifecycle di
-  `src/tui/terminal-lifecycle.ts` memulihkan terminal; `main()` tetap mencoba flush
-  session pada error/finally.
+`CancellationCoordinator` membuat satu `AbortController` untuk active operation.
+Signal diteruskan ke agent loop, provider stream, compaction request, permission
+prompt, tool registry, dan `BashTool`. `Ctrl+C` atau `SIGTERM` menggunakan jalur ini
+untuk membatalkan operasi aktif.
 
-Tidak ditemukan agent-wide deadline, model-request timeout, token/cost stopping
-budget, durable retry queue, atau automatic provider failover.
+`BashTool` mempunyai timeout default 120 detik dan menerima nilai sampai 30 menit.
+Saat timeout atau cancellation, process group dihentikan dengan SIGTERM lalu SIGKILL
+setelah grace period pada POSIX. Timeout menjadi error tool result, sedangkan abort
+menjadi cancellation task.
 
-## 12. Hubungan CLI, TUI, agent core, provider, dan tools
+## 14. Hubungan CLI, TUI, agent, provider, dan tools
 
-Plain renderer dan TUI tidak membaca output provider-specific. `AgentLoop` emit
-`AgentEvent` dari `src/agent/events.ts`. `TerminalRenderer` di
-`src/cli/renderer.ts` menampilkan stream/status langsung; `AgentTuiEventBridge` di
-`src/tui/event-bridge.ts` mengubah event yang sama menjadi retained visual state.
-Permission bergerak pada arah sebaliknya melalui `PermissionChecker`: plain memakai
-`PromptService`, sedangkan TUI memakai `TuiPermissionBroker`.
+`AgentLoop` memancarkan event provider-neutral dari `src/agent/events.ts`. Event ini
+memisahkan core dari cara terminal menampilkan aktivitas.
+
+`TerminalRenderer` di `src/cli/renderer.ts` menangani plain output. Text delta
+ditulis sebagai stream, reasoning ditampilkan sebagai status `Thinking`, dan tool
+events ditampilkan sebagai activity lines.
+
+Untuk TUI, `AgentTuiEventBridge` di `src/tui/event-bridge.ts` memetakan event yang
+sama ke retained state di `src/tui/state/tui-store.ts`. Activity, file preview,
+changes, command output, answer, usage, dan companion state diperbarui dari event
+agent, bukan dengan membaca output renderer plain.
+
+`TuiRuntimeBindings` di `src/tui/runtime-bindings.ts` menjadi boundary yang dipakai
+saat `createRuntime()` dirakit sebelum store dan controller TUI tersedia. Setelah
+`AgentTuiEventBridge` dan `TuiPermissionBroker` dibuat, bindings meneruskan agent
+event dan permission request ke TUI.
+
+Respons akhir tidak mempunyai jalur provider khusus. Provider mengirim normalized
+text delta, agent loop menyimpan assistant message dan menandai session selesai,
+lalu plain renderer atau TUI menampilkan text yang sama melalui `AgentEvent`.
+
+## 15. Diagram arsitektur
 
 ```mermaid
 flowchart LR
@@ -429,42 +448,42 @@ flowchart LR
   Main --> Config["ConfigStore"]
   Main --> Auth["AuthService"]
   Auth --> Credentials["CredentialStore / auth.json"]
-  Main --> SessionService["SessionService"]
-  SessionService --> SessionStore["SessionStore / JSONL"]
+  Main --> Sessions["SessionService"]
+  Sessions --> SessionStore["SessionStore / JSONL"]
 
-  Main --> Plain["Plain one-shot / REPL"]
+  Main --> Plain["Plain CLI / REPL"]
   Main --> TUI["TuiController"]
-  Plain --> Agent["Agent facade"]
+  Plain --> Agent["Agent"]
   TUI --> Agent
 
-  Agent --> AgentLoopNode["AgentLoop.runTask()"]
-  AgentLoopNode --> Context["ContextManager + system prompt"]
-  AgentLoopNode --> ProviderContract["ModelProvider"]
-  ProviderContract --> Codex["OpenAICodexProvider"]
-  ProviderContract --> Compatible["OpenAICompatibleProvider"]
+  Agent --> AgentLoop["AgentLoop.runTask()"]
+  AgentLoop --> Prompt["System prompt + ContextManager"]
+  AgentLoop --> Provider["ModelProvider"]
+  Provider --> Codex["OpenAICodexProvider"]
+  Provider --> Compatible["OpenAICompatibleProvider"]
   Codex --> Auth
-  Compatible -- "fallback without EULR_API_KEY" --> Auth
+  Compatible -- "stored credential fallback" --> Auth
 
   Codex --> ModelEvents["Normalized ModelEvent stream"]
   Compatible --> ModelEvents
-  ModelEvents --> AgentLoopNode
+  ModelEvents --> AgentLoop
 
-  AgentLoopNode --> Registry["ToolRegistry"]
+  AgentLoop --> Registry["ToolRegistry"]
   Registry --> Permission["PermissionManager"]
   Registry --> Read["read"]
   Registry --> Write["write"]
   Registry --> Edit["edit"]
   Registry --> Bash["bash"]
-  Registry --> AgentLoopNode
+  Registry --> AgentLoop
 
-  AgentLoopNode <--> SessionService
-  AgentLoopNode --> AgentEvents["Provider-neutral AgentEvent"]
-  AgentEvents --> PlainRenderer["TerminalRenderer"]
-  AgentEvents --> Bridge["AgentTuiEventBridge"]
+  AgentLoop <--> Sessions
+  AgentLoop --> Events["Provider-neutral AgentEvent"]
+  Events --> Renderer["TerminalRenderer"]
+  Events --> Bridge["AgentTuiEventBridge"]
   Bridge --> TUI
 ```
 
-Execution loop detail:
+## 16. Diagram alur satu task
 
 ```mermaid
 flowchart TD
@@ -474,114 +493,35 @@ flowchart TD
   Instructions --> BuildContext["Build prompt and active history"]
   BuildContext --> NeedsCompact{"Context over threshold?"}
   NeedsCompact -- Yes --> SafePrefix{"Safe prefix available?"}
-  SafePrefix -- No --> Stream
-  SafePrefix -- Yes --> Compact["Provider-generated summary"]
+  SafePrefix -- Yes --> Compact["Generate and persist summary"]
   Compact --> Rebuild["Reload session and rebuild prompt"]
   Rebuild --> Stream
+  SafePrefix -- No --> Stream
   NeedsCompact -- No --> Stream["provider.stream()"]
+
   Stream --> Complete{"Final done event received?"}
-  Complete -- No --> Fail["Persist partial; status failed"]
-  Complete -- Yes --> PersistAssistant["Persist assistant and usage"]
+  Complete -- No --> Failed["Persist partial response when present; fail task"]
+  Complete -- Yes --> PersistAssistant["Persist assistant message and usage"]
   PersistAssistant --> HasTools{"Tool calls present?"}
-  HasTools -- No --> Done["Status completed; final response"]
+  HasTools -- No --> Final["Complete session and return final response"]
   HasTools -- Yes --> NextTool["Take next tool call"]
-  NextTool --> Decode{"Complete call and valid JSON?"}
-  Decode -- No --> ErrorResult["Create error tool result"]
-  Decode -- Yes --> Validate{"Known tool and valid schema?"}
-  Validate -- No --> ErrorResult
-  Validate -- Yes --> PermissionCheck{"Permission allowed?"}
-  PermissionCheck -- No --> ErrorResult
-  PermissionCheck -- Yes --> Execute["Execute tool"]
-  Execute --> PersistTool["Persist tool events and role=tool"]
-  ErrorResult --> PersistTool
-  PersistTool --> MoreTools{"More calls in response?"}
+
+  NextTool --> Decode["Decode JSON or prepare malformed result"]
+  Decode --> ToolStart["Persist and emit tool_started"]
+  ToolStart --> Ready{"Call ready for registry?"}
+  Ready -- No --> ToolError["Create error tool result"]
+  Ready -- Yes --> Validate{"Known tool and valid schema?"}
+  Validate -- No --> ToolError
+  Validate -- Yes --> Allowed{"Permission allowed?"}
+  Allowed -- No --> ToolError
+  Allowed -- Yes --> Execute["Execute tool"]
+  Execute -- Result --> PersistTool["Persist tool finish and role=tool"]
+  Execute -- Cancellation --> Cancelled["Cancel task; reconcile on resume"]
+  ToolError --> PersistTool
+
+  PersistTool --> MoreTools{"More calls in this response?"}
   MoreTools -- Yes --> NextTool
   MoreTools -- No --> Limit{"Turn limit reached?"}
   Limit -- No --> Turn
-  Limit -- Yes --> Fail
+  Limit -- Yes --> Failed
 ```
-
-## 13. Status kemampuan arsitektur
-
-### Implemented
-
-- Provider-neutral, streamed, multi-turn model/tool loop:
-  `AgentLoop.runTask()` dan `collectResponse()` di `src/agent/loop.ts`.
-- Model-selected tool calls, Zod validation, permission gating, dan sequential tool
-  result feedback: `src/tools/registry.ts` dan `AgentLoop.executeToolCall()`.
-- Empat static tools `read`, `write`, `edit`, `bash`: `src/tools/`.
-- Workspace/symlink boundary untuk file tools: `src/utils/paths.ts`.
-- Sensitive-file dan high-risk-command prompts:
-  `src/tools/registry.ts`, `src/permissions/command-risk.ts`, dan
-  `src/permissions/permission-manager.ts`.
-- System prompt, canonical cwd, dan root `AGENTS.md` check/reload-on-change:
-  `src/agent/system-prompt.ts` dan `src/agent/project-instructions.ts`.
-- Automatic/manual model-generated context compaction:
-  `src/agent/context-manager.ts` dan `src/agent/compaction.ts`.
-- Append-only JSONL session reconstruction/resume without rerunning old tools:
-  `src/sessions/store.ts`, `src/sessions/state.ts`, dan
-  `src/sessions/session-service.ts`.
-- Cooperative cancellation, partial stream persistence, task/tool lifecycle event,
-  dan terminal restoration: `src/agent/loop.ts`, `src/cli/interactive.ts`, dan
-  `src/tui/terminal-lifecycle.ts`.
-- Plain and retained TUI consumers of provider-neutral agent events:
-  `src/cli/renderer.ts` dan `src/tui/event-bridge.ts`.
-- Codex reasoning-effort propagation, reasoning event persistence, dan encrypted
-  provider-item replay: `src/cli/main.ts`, `src/providers/reasoning.ts`,
-  `src/agent/loop.ts`, dan `src/providers/adapters/responses.ts`.
-
-### Partially implemented
-
-- **Parallel tool calls:** provider boleh mengirim multiple/parallel calls, tetapi
-  core mengeksekusinya sequential. Dasar: `src/agent/loop.ts` dan provider adapters.
-- **Context accounting:** memakai provider usage atau estimasi karakter, bukan
-  tokenizer model-specific; compaction dapat no-op tanpa safe boundary. Dasar:
-  `src/agent/context-manager.ts`.
-- **Workspace security:** file tools dibatasi, tetapi `bash` bukan sandbox dan dapat
-  keluar workspace. Dasar: `src/utils/paths.ts`, `src/tools/bash.ts`.
-- **Command risk:** detector mencakup pola berisiko penting tetapi bersifat heuristik,
-  bukan parser/policy shell lengkap. Dasar: `src/permissions/command-risk.ts`.
-- **Cancellation:** provider dan bash cooperative, sedangkan filesystem operation
-  yang sudah berlangsung tidak abortable. Dasar: `src/tools/registry.ts` dan file
-  tools.
-- **Retry:** ada pada transport provider tertentu, tidak ada unified task retry,
-  post-stream reconnect, atau tool retry. Dasar: provider implementations dan
-  `src/agent/loop.ts`.
-- **Redaction:** diterapkan pada error/log/UI tertentu, tetapi bukan pada semua raw
-  tool input/result sebelum model atau JSONL. Dasar: `src/auth/redaction.ts` dan
-  `src/sessions/store.ts`.
-- **Queued TUI follow-up:** satu message dapat diantrekan, tetapi baru dijalankan
-  setelah active run selesai. Dasar: `TuiController.submit()`.
-- **Interrupted tool recovery:** repair tanpa rerun terjadi hanya saat explicit
-  `SessionService.resume()`, bukan refresh biasa setelah failure.
-
-### Not found
-
-- Local planner, task graph, action scorer, reflection engine, atau independent
-  verifier.
-- Reasoning-effort selection untuk `openai-compatible`; runtime hanya memilih dan
-  meneruskan effort untuk `openai-codex` melalui `src/cli/main.ts`.
-- MCP, sub-agent/multi-agent execution, repository embeddings, vector search, atau
-  semantic persistent memory.
-- Dynamic provider/tool plugin discovery pada production path.
-- Concurrent tool executor, automatic tool retry, transaction, rollback, atau
-  filesystem checkpoint.
-- Shell/container/chroot/seccomp/network sandbox atau comprehensive shell policy.
-- Automatic provider failover atau perpindahan subscription/API billing.
-- Agent-wide/model-request deadline, token/cost budget stop, atau stream resume.
-- Durable/persisted permission decisions atau per-target approval policy.
-- Session encryption, cross-process JSONL lock, schema migration, pruning/archive,
-  branching, atau remote session persistence.
-- Hierarki project instructions di parent/nested directory; loader hanya membaca
-  root `${cwd}/AGENTS.md` melalui `ProjectInstructionLoader`.
-
-## 14. Ringkasan boundary desain aktual
-
-Arsitektur yang berjalan adalah loop sederhana dan eksplisit: **model menentukan
-aksi, core memvalidasi dan mengorkestrasi, permission manager mengizinkan atau
-menolak, tool menjalankan efek lokal, dan session store mencatat round-trip**.
-Provider adapters menjaga agent core bebas dari wire protocol, sementara CLI/TUI
-hanya menjadi input dan consumer event. Batas terpenting untuk pengembangan lanjutan
-adalah tidak menyamakan prompt guidance dengan sandbox, tidak menyamakan provider
-reasoning dengan planner lokal, dan tidak menyamakan append-only session history
-dengan encrypted atau concurrent durable state.
