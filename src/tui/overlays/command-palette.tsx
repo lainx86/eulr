@@ -89,6 +89,7 @@ export function CommandPalette({
             height={1}
             width="100%"
             paddingX={1}
+            columnGap={2}
             backgroundColor={active ? colors.accent : colors.surface}
             overflow="hidden"
           >

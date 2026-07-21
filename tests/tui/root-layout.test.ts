@@ -161,6 +161,9 @@ describe("RootLayout rendering", () => {
     expect(firstCommandLine).toBeLessThan(inputLine);
     expect(withPalette[firstCommandLine]?.indexOf("/help")).toBeLessThan(8);
     expect(withPalette.join("\n")).toContain("/model [model-id]");
+    expect(withPalette.join("\n")).toMatch(
+      /\/login\s{2,}Authenticate a provider/u,
+    );
     expect(findLine(withPalette, "eulr ›")).toBe(findLine(idle, "eulr ›"));
     expect(findLine(withPalette, "EULR COMPANION")).toBe(
       findLine(idle, "EULR COMPANION"),
