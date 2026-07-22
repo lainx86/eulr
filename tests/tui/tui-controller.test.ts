@@ -2,10 +2,6 @@ import { describe, expect, it, vi } from "vitest";
 
 import { CancellationCoordinator } from "../../src/cli/interactive.js";
 import type { InteractiveRuntime } from "../../src/cli/interactive.js";
-import type {
-  MusicCommand,
-  MusicPlaybackState,
-} from "../../src/music/types.js";
 import type { SessionState } from "../../src/sessions/state.js";
 import type { ModelInfo } from "../../src/providers/provider.js";
 import { TuiPermissionBroker } from "../../src/tui/event-bridge.js";
@@ -13,7 +9,6 @@ import { TuiStore } from "../../src/tui/state/tui-store.js";
 import {
   TuiController,
   type TuiControllerActions,
-  type TuiMusicController,
 } from "../../src/tui/tui-controller.js";
 
 describe("TuiController", () => {
@@ -88,32 +83,6 @@ describe("TuiController", () => {
     await fixture.controller.shutdown();
   });
 
-  it("routes slash music commands and focused-player commands to the music service", async () => {
-    const fixture = createFixture();
-
-    fixture.controller.submit("/music volume 42");
-    await vi.waitFor(() => {
-      expect(fixture.music.commands).toEqual([{ type: "volume", volume: 42 }]);
-    });
-    expect(fixture.store.getSnapshot().music.volume).toBe(42);
-
-    await fixture.controller.musicKey({ type: "toggle" });
-    expect(fixture.music.commands.at(-1)).toEqual({ type: "toggle" });
-    expect(fixture.store.getSnapshot().music.playing).toBe(true);
-
-    fixture.controller.submit("/music remote");
-    await vi.waitFor(() => {
-      expect(fixture.music.commands).toContainEqual({ type: "remote" });
-    });
-
-    fixture.controller.submit("/music status");
-    await vi.waitFor(() => {
-      expect(fixture.store.getSnapshot().statusMessage).toBe("Playing");
-    });
-
-    await fixture.controller.shutdown();
-  });
-
   it("opens the rich runtime status in the idle card", async () => {
     const session = {
       ...sessionState("status-session", "gpt-5.6-sol"),
@@ -171,39 +140,6 @@ describe("TuiController", () => {
 
     run.resolve();
     await vi.waitFor(() => expect(fixture.runtime.flush).toHaveBeenCalled());
-    await fixture.controller.shutdown();
-  });
-
-  it("isolates and redacts a music failure so agent tasks remain usable", async () => {
-    const fixture = createFixture();
-    fixture.music.failure = new Error(
-      "mpv failed with Authorization: Bearer music-secret-token",
-    );
-
-    fixture.controller.submit("/music play");
-    await vi.waitFor(() => {
-      expect(fixture.store.getSnapshot().statusMessage).toContain(
-        "Music: mpv failed",
-      );
-    });
-    expect(fixture.store.getSnapshot().statusMessage).not.toContain(
-      "music-secret-token",
-    );
-    expect(fixture.store.getSnapshot().phase).toBe("idle");
-
-    fixture.music.failure = undefined;
-    fixture.runtime.setRunHandler(async () => {
-      fixture.store.finishRun("completed", "Task completed");
-    });
-    fixture.controller.submit("continue coding");
-    await vi.waitFor(() => {
-      expect(fixture.runtime.run).toHaveBeenCalledWith(
-        "continue coding",
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-      expect(fixture.store.getSnapshot().phase).toBe("completed");
-    });
-
     await fixture.controller.shutdown();
   });
 
@@ -455,16 +391,14 @@ describe("TuiController", () => {
     await fixture.controller.shutdown();
   });
 
-  it("exits on idle Ctrl+C and flushes while releasing the music subscription", async () => {
+  it("exits on idle Ctrl+C and flushes the session", async () => {
     const fixture = createFixture();
-    expect(fixture.music.listenerCount).toBe(1);
 
     fixture.controller.interrupt();
     expect(fixture.exit).toHaveBeenCalledOnce();
 
     await fixture.controller.shutdown();
     expect(fixture.runtime.flush).toHaveBeenCalledOnce();
-    expect(fixture.music.listenerCount).toBe(0);
   });
 
   it("shutdown aborts an active run before its final session flush", async () => {
@@ -491,7 +425,6 @@ describe("TuiController", () => {
     expect(aborted).toBe(true);
     expect(fixture.store.getSnapshot().phase).toBe("cancelled");
     expect(fixture.runtime.flush.mock.calls.length).toBeGreaterThanOrEqual(2);
-    expect(fixture.music.listenerCount).toBe(0);
   });
 });
 
@@ -516,7 +449,6 @@ function createFixture(options: FixtureOptions = {}) {
   });
   const permissions = new TuiPermissionBroker(store);
   const cancellation = new CancellationCoordinator();
-  const music = new FakeMusicController();
   const actions = {
     login: vi.fn(async () => runtime.runtime),
     logout: vi.fn(async () => true),
@@ -530,7 +462,6 @@ function createFixture(options: FixtureOptions = {}) {
     permissions,
     cancellation,
     actions,
-    music,
   });
   const exit = vi.fn<(error?: Error) => void>();
   controller.bindApp({
@@ -542,7 +473,6 @@ function createFixture(options: FixtureOptions = {}) {
     cancellation,
     controller,
     exit,
-    music,
     permissions,
     runtime,
     store,
@@ -654,64 +584,6 @@ function createRuntimeHarness(options: RuntimeHarnessOptions = {}) {
     },
     setSessionModel,
     setSessionReasoningEffort,
-  };
-}
-
-class FakeMusicController implements TuiMusicController {
-  readonly commands: MusicCommand[] = [];
-  failure?: Error;
-  private state = musicState();
-  private readonly listeners = new Set<(state: MusicPlaybackState) => void>();
-
-  get listenerCount(): number {
-    return this.listeners.size;
-  }
-
-  getState(): MusicPlaybackState {
-    return this.state;
-  }
-
-  subscribe(listener: (state: MusicPlaybackState) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  async execute(command: MusicCommand): Promise<MusicPlaybackState> {
-    this.commands.push(command);
-    if (this.failure !== undefined) throw this.failure;
-    if (command.type === "volume") {
-      this.state = { ...this.state, volume: command.volume };
-    } else if (command.type === "play" || command.type === "toggle") {
-      this.state = {
-        ...this.state,
-        playing: true,
-        statusMessage: "Playing",
-      };
-    } else if (command.type === "pause") {
-      this.state = {
-        ...this.state,
-        playing: false,
-        statusMessage: "Paused",
-      };
-    }
-    for (const listener of this.listeners) listener(this.state);
-    return this.state;
-  }
-}
-
-function musicState(): MusicPlaybackState {
-  return {
-    available: true,
-    statusMessage: "Ready",
-    playing: false,
-    elapsedSeconds: 0,
-    durationSeconds: 180,
-    volume: 70,
-    shuffle: false,
-    repeat: false,
-    source: "remote",
-    trackIndex: 0,
-    trackCount: 1,
   };
 }
 

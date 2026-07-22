@@ -143,7 +143,7 @@ The screen always keeps this vertical order:
 ```text
 dynamic main area
 input area
-companion | music player
+companion
 ```
 
 The idle main area shows a dense welcome card with real quick actions, workspace
@@ -162,8 +162,8 @@ During a task it becomes an activity timeline and context inspector with
 write/edit metadata produces an in-memory diff (including new files and
 repositories without commits), command streams open Output, and final text
 opens Answer. Activity and inspector scrolling never moves the input or dock.
-Scrolling is scoped to those two panels only; the input, companion, and music
-player remain fixed regardless of viewport length or focus changes.
+Scrolling is scoped to those two panels only; the input and companion remain
+fixed regardless of viewport length or focus changes.
 
 Tabs, carriage returns, and other terminal-positioning controls from source or
 command output are normalized before rendering. React and dependency console
@@ -171,8 +171,8 @@ diagnostics are redirected to the redacted TUI log instead of being written
 over the retained screen.
 
 The layout switches between full, compact, and minimum modes on resize. In
-minimum mode one main panel is visible at a time, while input, companion, and
-music remain pinned. Very small terminals degrade to terse content without
+minimum mode one main panel is visible at a time, while input and companion
+remain pinned. Very small terminals degrade to terse content without
 changing region order.
 
 Main key bindings:
@@ -181,7 +181,7 @@ Main key bindings:
 Tab / Shift+Tab       move focus
 PageUp / PageDown     scroll focused panel
 Home / End            start/end of focused viewport
-Left / Right          change inspector tab; seek when music is focused
+Left / Right          change inspector tab
 Shift+Left / Right    scroll inspector content horizontally
 Enter                 submit input
 Alt+Enter             insert a newline
@@ -217,7 +217,6 @@ activity history and bottom dock remain visible throughout.
 /new                  start a new session
 /resume [session-id]  resume a saved session or open the selector
 /sessions             open the recent-session selector
-/music <command>      control remote or local music playback
 /compact              summarize older context now
 /status               open rich idle status; show a concise status while working
 /clear                clear the terminal without deleting history
@@ -238,55 +237,15 @@ marks the run cancelled, flushes the session, and restores the retained input.
 On exit, SIGTERM, or a fatal render error, raw mode, cursor visibility,
 bracketed paste, and the original screen buffer are restored.
 
-## Companion and music
+## Companion
 
-The left dock panel maps actual agent state to idle, thinking, reading, editing,
+The dock panel maps actual agent state to idle, thinking, reading, editing,
 running, permission, completed, error, and cancelled states. No raster artwork
 ships in this repository, so the renderer uses the neutral `eulr ✦` mark.
 Optional future assets have stable slots under `assets/companion/`; because Ink
 does not expose a stable cross-terminal image primitive, unsupported or missing
 image protocols always use the Unicode fallback. See
 [`docs/tui-architecture.md`](docs/tui-architecture.md).
-
-The right dock panel is a functional player backed by `mpv` JSON IPC. Remote
-radio is the default source. eulr requests the station catalog and live
-now-playing state from `https://eulr-music-service.vercel.app`, gives the
-returned audio URL directly to mpv, and seeks to the station position instead
-of downloading the file into Node.js memory. Periodic refresh and end-of-track
-refresh detect station changes; position corrections occur only when drift is
-large enough to matter.
-
-eulr starts mpv lazily in audio-only mode, uses a private temporary IPC socket,
-tracks playback state, and closes the process on exit. Install `mpv` separately;
-eulr never downloads it. If mpv or the radio service is unavailable, the panel
-reports an offline status, retries the service with bounded exponential backoff,
-and leaves the coding agent fully usable. No audio files are bundled in the npm
-package.
-
-```text
-/music remote          select the synchronized eulr radio (default)
-/music local           select the configured local library
-/music off             disable music without affecting the agent
-/music library <path>  scan and select a local library
-/music play            start playback
-/music pause           pause playback
-/music toggle          toggle play/pause
-/music next            next track
-/music previous        previous track
-/music seek <seconds>  seek to an absolute position
-/music volume <0-100>  set volume
-/music shuffle         toggle shuffle
-/music repeat          toggle repeat
-/music status          show player status
-```
-
-Supported files include MP3, FLAC, M4A, AAC, Ogg/Opus, WAV, AIFF, ALAC, WebM,
-and WMA when the installed mpv can decode them. Music focus adds Space,
-Left/Right, Up/Down, `N`, `P`, `S`, and `R` for playback, seek, volume, track,
-shuffle, and repeat controls. Source, local-library path, remote service URL,
-volume, modes, last local track, and local position are stored in eulr config
-independently of coding sessions. A legacy config that only has `libraryPath`
-continues in local mode; otherwise new installations use remote mode.
 
 ## Tools and permissions
 
@@ -351,7 +310,6 @@ EULR_PROVIDER   provider ID
 EULR_MODEL      model ID
 EULR_API_KEY    API key for openai-compatible
 EULR_BASE_URL   compatible API base URL
-EULR_MUSIC_SERVICE_URL override the remote radio service base URL
 EULR_HOME       override eulr's data directory
 EULR_NO_BROWSER disable automatic browser opening when set to 1
 NO_COLOR        disable colors in plain output (TUI backgrounds remain painted)
@@ -374,18 +332,9 @@ Example configuration:
       "defaultModel": "<model-id>",
       "baseUrl": "https://api.openai.com/v1"
     }
-  },
-  "music": {
-    "source": "remote",
-    "serviceUrl": "https://eulr-music-service.vercel.app",
-    "volume": 70
   }
 }
 ```
-
-The remote service URL is selected in this order:
-`EULR_MUSIC_SERVICE_URL`, `music.serviceUrl` in config, then the public default
-above. Valid music sources are `remote`, `local`, and `off`.
 
 ## Architecture
 
@@ -425,9 +374,6 @@ flowchart TB
     Bridge --> Store[Retained TUI store]
     Store --> TUI
 
-    TUI <--> Music[Music service]
-    Music --> Sources[remote / local / off]
-    Sources --> MPV[mpv JSON IPC backend]
 ```
 
 One agent task follows the same provider-neutral loop regardless of which
@@ -494,20 +440,17 @@ pnpm test
 pnpm build
 ```
 
-Tests use mock HTTP servers, scripted providers, fake terminals, and mock music
-backends. They never require a real
-OAuth login or model request. Coverage includes agent-loop behavior, auth and
-refresh, tools, permission/security boundaries, JSONL recovery, compaction, and
-an integration flow that reads, edits, tests, and completes a fixture task.
+Tests use mock HTTP servers, scripted providers, and fake terminals. They never
+require a real OAuth login or model request. Coverage includes agent-loop
+behavior, auth and refresh, tools, permission/security boundaries, JSONL
+recovery, compaction, and an integration flow that reads, edits, tests, and
+completes a fixture task.
 
 ## Version 1 limits
 
 - No MCP, sub-agents, or repository embeddings
 - The TUI uses a Unicode companion mark until project artwork and a stable Ink
   terminal-image adapter are available
-- Music playback requires a separately installed `mpv`; remote radio also
-  depends on the separately operated eulr music service, and cover-art
-  rendering is not available in the baseline dock
 - Commands run through the system shell and are approved as a single command
 - High-risk analysis covers common structured command forms but is not an OS
   sandbox; dynamically generated scripts can obscure their eventual behavior

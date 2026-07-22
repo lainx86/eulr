@@ -1,7 +1,5 @@
 import { render } from "ink";
 
-import type { MusicService } from "../music/music-service.js";
-import { sanitizeError } from "../auth/redaction.js";
 import { TuiApp } from "./app.js";
 import { TuiController } from "./tui-controller.js";
 import {
@@ -14,7 +12,6 @@ import type { TuiStore } from "./state/tui-store.js";
 export interface RunTuiOptions {
   store: TuiStore;
   controller: TuiController;
-  music: MusicService;
   initialTask?: string;
   debug?: boolean;
 }
@@ -29,13 +26,6 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
       session: options.store.getSnapshot().sessionId,
     });
   }
-  await options.music.initialize().catch((error: unknown) => {
-    options.store.setStatus(
-      `Music initialization: ${sanitizeError(error).message}`,
-    );
-    void logger.log("warn", "Music initialization failed", error);
-  });
-
   let instance: ReturnType<typeof render> | undefined;
   const restoreConsole = captureTuiConsole(logger);
   const lifecycle = new TerminalLifecycle({
@@ -82,9 +72,6 @@ export async function runTui(options: RunTuiOptions): Promise<void> {
       lifecycle.dispose();
       await options.controller.shutdown().catch((error: unknown) => {
         void logger.log("warn", "TUI controller shutdown failed", error);
-      });
-      await options.music.close().catch((error: unknown) => {
-        void logger.log("warn", "Music backend shutdown failed", error);
       });
       await lifecycle.flushLogs().catch(() => undefined);
     } finally {

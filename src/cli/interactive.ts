@@ -236,11 +236,6 @@ export async function runInteractive(
           case "sessions":
             await showSessions(options.renderer, runtime.sessions);
             break;
-          case "music":
-            options.renderer.line(
-              "Music controls require full-screen TUI mode.",
-            );
-            break;
           case "compact":
             {
               const previousSummary = runtime.agent.session.contextSummary;

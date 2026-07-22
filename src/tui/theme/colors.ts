@@ -11,7 +11,6 @@ export const COLORS = Object.freeze({
   warning: "#d1a545",
   danger: "#d76a61",
   companion: "#86a18a",
-  music: "#c4b47a",
 });
 
 export type ThemeColor = keyof typeof COLORS;

@@ -118,7 +118,7 @@ describe("configuration", () => {
     ).toBe("https://configured.example/v1");
   });
 
-  it("loads legacy config without adding music defaults", async () => {
+  it("loads a minimal provider config", async () => {
     const root = await temporaryRoot();
     const path = join(root, "config.json");
     await writeFile(path, '{"providers":{}}\n');
@@ -149,46 +149,21 @@ describe("configuration", () => {
     });
   });
 
-  it("validates and persists music settings", async () => {
-    const root = await temporaryRoot();
-    const path = join(root, "config.json");
-    const store = new ConfigStore(path);
-
-    await store.updateMusic({
-      libraryPath: "/music",
-      volume: 85,
-      shuffle: true,
-      repeat: false,
-      lastTrack: "album/song.flac",
-      positionSeconds: 12.5,
-    });
-
-    expect((await store.load()).music).toEqual({
-      libraryPath: "/music",
-      volume: 85,
-      shuffle: true,
-      repeat: false,
-      lastTrack: "album/song.flac",
-      positionSeconds: 12.5,
-    });
-    await expect(store.updateMusic({ volume: 101 })).rejects.toThrow();
-    await expect(store.updateMusic({ positionSeconds: -1 })).rejects.toThrow();
-  });
-
-  it("serializes concurrent provider and music mutations", async () => {
+  it("serializes concurrent provider mutations", async () => {
     const root = await temporaryRoot();
     const path = join(root, "config.json");
     const store = new ConfigStore(path);
 
     await Promise.all([
       store.setDefaultModel("openai-codex", "gpt-test"),
-      store.updateMusic({ volume: 42 }),
-      store.updateMusic(async (music) => ({ ...music, shuffle: true })),
+      store.setDefaultModel("openai-compatible", "compatible-test"),
     ]);
 
     expect(await store.load()).toEqual({
-      providers: { "openai-codex": { defaultModel: "gpt-test" } },
-      music: { volume: 42, shuffle: true },
+      providers: {
+        "openai-codex": { defaultModel: "gpt-test" },
+        "openai-compatible": { defaultModel: "compatible-test" },
+      },
     });
     expect((await readFile(path, "utf8")).endsWith("\n")).toBe(true);
     if (process.platform !== "win32") {

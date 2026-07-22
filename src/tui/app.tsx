@@ -173,12 +173,6 @@ export function TuiApp({
       return;
     }
 
-    if (
-      state.focus === "music" &&
-      handleMusicInput(value, key, state.music, controller)
-    ) {
-      return;
-    }
     if (state.focus === "inspector") {
       if (key.leftArrow || key.rightArrow) {
         if (key.shift) {
@@ -260,41 +254,4 @@ export function TuiApp({
       }}
     />
   );
-}
-
-function handleMusicInput(
-  value: string,
-  key: Parameters<Parameters<typeof useInput>[0]>[1],
-  music: ReturnType<TuiStore["getSnapshot"]>["music"],
-  controller: TuiController,
-): boolean {
-  const lower = value.toLowerCase();
-  if (key.escape) return false;
-  if (value === " ") void controller.musicKey({ type: "toggle" });
-  else if (key.leftArrow)
-    void controller.musicKey({
-      type: "seek",
-      seconds: Math.max(0, music.elapsedSeconds - 5),
-    });
-  else if (key.rightArrow)
-    void controller.musicKey({
-      type: "seek",
-      seconds: music.elapsedSeconds + 5,
-    });
-  else if (key.upArrow)
-    void controller.musicKey({
-      type: "volume",
-      volume: Math.min(100, music.volume + 5),
-    });
-  else if (key.downArrow)
-    void controller.musicKey({
-      type: "volume",
-      volume: Math.max(0, music.volume - 5),
-    });
-  else if (lower === "n") void controller.musicKey({ type: "next" });
-  else if (lower === "p") void controller.musicKey({ type: "previous" });
-  else if (lower === "s") void controller.musicKey({ type: "shuffle" });
-  else if (lower === "r") void controller.musicKey({ type: "repeat" });
-  else return false;
-  return true;
 }

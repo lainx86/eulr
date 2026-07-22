@@ -9,12 +9,7 @@ import {
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 
-import {
-  defaultConfig,
-  eulrConfigSchema,
-  type EulrConfig,
-  type MusicConfig,
-} from "./schema.js";
+import { defaultConfig, eulrConfigSchema, type EulrConfig } from "./schema.js";
 import { ConfigurationError } from "../utils/errors.js";
 import type { ReasoningEffort } from "../providers/provider.js";
 
@@ -117,21 +112,6 @@ export class ConfigStore {
       () => undefined,
     );
     return operation;
-  }
-
-  async updateMusic(
-    patch:
-      | Partial<MusicConfig>
-      | ((current: MusicConfig) => MusicConfig | Promise<MusicConfig>),
-  ): Promise<MusicConfig> {
-    const config = await this.update(async (current) => {
-      const previous = current.music ?? {};
-      current.music =
-        typeof patch === "function"
-          ? await patch({ ...previous })
-          : { ...previous, ...patch };
-    });
-    return config.music ?? {};
   }
 }
 

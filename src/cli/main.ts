@@ -16,7 +16,6 @@ import {
 } from "../config/config-store.js";
 import { getEulrPaths } from "../config/data-paths.js";
 import type { EulrConfig } from "../config/schema.js";
-import { MusicService } from "../music/music-service.js";
 import { PermissionManager } from "../permissions/permission-manager.js";
 import type {
   PermissionDecision,
@@ -186,7 +185,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         services,
         presentation,
       );
-      const music = new MusicService({ configStore: services.configStore });
       const store = new TuiStore({
         providerId: runtime.providerId,
         model: runtime.model,
@@ -196,7 +194,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         cwd: runtime.cwd,
         session: runtime.session,
         version: VERSION,
-        music: music.getState(),
         ...(runtime.authentication === undefined
           ? {}
           : { authentication: runtime.authentication }),
@@ -215,7 +212,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         store,
         permissions: permissionBroker,
         cancellation,
-        music,
         actions: {
           login: async (signal, current) => {
             const loginArgs: CliArgs = {
@@ -264,7 +260,6 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       await runTui({
         store,
         controller,
-        music,
         debug: args.debug,
         ...(args.task === undefined ? {} : { initialTask: args.task }),
       });

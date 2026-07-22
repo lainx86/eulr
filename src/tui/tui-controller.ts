@@ -1,25 +1,15 @@
 import type { InteractiveRuntime } from "../cli/interactive.js";
 import { CancellationCoordinator } from "../cli/interactive.js";
 import { parseInteractiveCommand } from "../cli/commands.js";
-import type { MusicCommand, MusicPlaybackState } from "../music/types.js";
 import type { PermissionChoice, TuiPermissionBroker } from "./event-bridge.js";
 import type { TuiStore } from "./state/tui-store.js";
 import { redactText, sanitizeError } from "../auth/redaction.js";
-import { ConfigurationError, isAbortError } from "../utils/errors.js";
+import { isAbortError } from "../utils/errors.js";
 import type { ReasoningEffort } from "../providers/provider.js";
 import {
   reasoningEffortLabel,
   reasoningOptionsForModel,
 } from "../providers/reasoning.js";
-
-export interface TuiMusicController {
-  getState(): MusicPlaybackState;
-  subscribe(listener: (state: MusicPlaybackState) => void): () => void;
-  execute(
-    command: MusicCommand,
-    signal?: AbortSignal,
-  ): Promise<MusicPlaybackState>;
-}
 
 export interface TuiControllerActions {
   login(
@@ -42,7 +32,6 @@ export interface TuiControllerOptions {
   permissions: TuiPermissionBroker;
   cancellation: CancellationCoordinator;
   actions: TuiControllerActions;
-  music: TuiMusicController;
 }
 
 type SuspendTerminal = (callback: () => void | Promise<void>) => Promise<void>;
@@ -53,12 +42,10 @@ export class TuiController {
   private readonly permissions: TuiPermissionBroker;
   private readonly cancellation: CancellationCoordinator;
   private readonly actions: TuiControllerActions;
-  private readonly music: TuiMusicController;
   private suspendTerminal?: SuspendTerminal;
   private exitUi?: (error?: Error) => void;
   private redrawUi?: () => void;
   private activeRun?: Promise<void>;
-  private unsubscribeMusic?: () => void;
   private modelCatalogGeneration = 0;
 
   constructor(options: TuiControllerOptions) {
@@ -67,11 +54,6 @@ export class TuiController {
     this.permissions = options.permissions;
     this.cancellation = options.cancellation;
     this.actions = options.actions;
-    this.music = options.music;
-    this.store.setMusic(options.music.getState());
-    this.unsubscribeMusic = options.music.subscribe((state) => {
-      this.store.setMusic(state);
-    });
   }
 
   bindApp(input: {
@@ -105,10 +87,6 @@ export class TuiController {
         status: "queued",
         timestamp: Date.now(),
       });
-      return;
-    }
-    if (value.startsWith("/music")) {
-      void this.runMusicCommand(value);
       return;
     }
     const command = parseInteractiveCommand(value);
@@ -176,14 +154,6 @@ export class TuiController {
     this.store.setFocus("input");
   }
 
-  async musicKey(command: MusicCommand): Promise<void> {
-    try {
-      await this.music.execute(command);
-    } catch (error) {
-      this.store.setStatus(`Music: ${sanitizeError(error).message}`);
-    }
-  }
-
   async loadModelCatalog(): Promise<void> {
     const runtime = this.runtime;
     const generation = ++this.modelCatalogGeneration;
@@ -211,8 +181,6 @@ export class TuiController {
 
   async shutdown(): Promise<void> {
     this.modelCatalogGeneration += 1;
-    this.unsubscribeMusic?.();
-    this.unsubscribeMusic = undefined;
     if (this.activeRun !== undefined) {
       this.cancellation.onSigint();
       await this.activeRun.catch(() => undefined);
@@ -294,9 +262,6 @@ export class TuiController {
           return;
         case "sessions":
           await this.showSessions();
-          return;
-        case "music":
-          await this.music.execute(command.command);
           return;
         case "compact": {
           this.store.setCompanion("thinking", "Compacting older context");
@@ -479,17 +444,6 @@ export class TuiController {
     void this.loadModelCatalog();
   }
 
-  private async runMusicCommand(input: string): Promise<void> {
-    try {
-      const command = parseMusicCommand(input);
-      const state = await this.music.execute(command);
-      this.store.setMusic(state);
-      if (command.type === "status") this.store.setStatus(state.statusMessage);
-    } catch (error) {
-      this.store.setStatus(`Music: ${sanitizeError(error).message}`);
-    }
-  }
-
   private async withSuspendedTerminal(
     callback: () => Promise<void>,
   ): Promise<void> {
@@ -501,48 +455,6 @@ export class TuiController {
   }
 }
 
-export function parseMusicCommand(input: string): MusicCommand {
-  const parts = input.trim().split(/\s+/u);
-  const action = parts[1] ?? "status";
-  const argument = parts.slice(2).join(" ");
-  if (action === "library") {
-    if (argument === "")
-      throw new ConfigurationError("Usage: /music library <path>");
-    return { type: "library", path: argument };
-  }
-  if (action === "seek") {
-    const seconds = Number(argument);
-    if (!Number.isFinite(seconds))
-      throw new ConfigurationError("Usage: /music seek <seconds>");
-    return { type: "seek", seconds };
-  }
-  if (action === "volume") {
-    const volume = Number(argument);
-    if (!Number.isFinite(volume) || volume < 0 || volume > 100) {
-      throw new ConfigurationError("Usage: /music volume <0-100>");
-    }
-    return { type: "volume", volume };
-  }
-  if (
-    [
-      "play",
-      "remote",
-      "local",
-      "off",
-      "pause",
-      "toggle",
-      "next",
-      "previous",
-      "shuffle",
-      "repeat",
-      "status",
-    ].includes(action)
-  ) {
-    return { type: action } as MusicCommand;
-  }
-  throw new ConfigurationError(`Unknown music command: ${action}`);
-}
-
 function isPassiveCommand(input: string): boolean {
-  return /^\/(?:help|status|clear|music)(?:\s|$)/u.test(input);
+  return /^\/(?:help|status|clear)(?:\s|$)/u.test(input);
 }

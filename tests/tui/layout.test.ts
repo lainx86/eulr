@@ -29,29 +29,12 @@ describe("computeLayout", () => {
     expect(layout.dock.height).toBeGreaterThanOrEqual(0);
   });
 
-  it("places companion left of music and consumes the dock width", () => {
-    const layout = computeLayout(121, 40);
-    const { companion, music, gap } = layout.dockColumns;
-
-    expect(companion.x).toBe(layout.dock.x);
-    expect(music.x).toBe(companion.x + companion.width + gap);
-    expect(companion.width + gap + music.width).toBe(layout.dock.width);
-    expect(music.x + music.width).toBe(layout.dock.x + layout.dock.width);
-    expect(companion.y).toBe(layout.dock.y);
-    expect(music.y).toBe(layout.dock.y);
-    expect(companion.width / (companion.width + music.width)).toBeCloseTo(
-      0.38,
-      1,
-    );
-  });
-
   it("reserves stable input and dock regions independent of task activity", () => {
     const idle = computeLayout(140, 42);
     const working = computeLayout(140, 42);
 
     expect(working.input).toEqual(idle.input);
     expect(working.dock).toEqual(idle.dock);
-    expect(working.dockColumns).toEqual(idle.dockColumns);
   });
 
   it("normalizes invalid dimensions without producing negative regions", () => {

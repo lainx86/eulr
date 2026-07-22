@@ -23,7 +23,7 @@ export type ActivityStatus =
   "queued" | "active" | "completed" | "failed" | "cancelled";
 
 export type InspectorTab = "changes" | "file" | "output" | "answer";
-export type FocusTarget = "activity" | "inspector" | "input" | "music";
+export type FocusTarget = "activity" | "inspector" | "input";
 export type IdleView = "welcome" | "status";
 
 export interface RuntimeStatusUiState {
@@ -106,29 +106,6 @@ export type OverlayState =
       selectedIndex: number;
     };
 
-export interface MusicUiState {
-  available: boolean;
-  statusMessage: string;
-  playing: boolean;
-  track?: {
-    id: string;
-    title: string;
-    artist?: string;
-    album?: string;
-    path?: string;
-  };
-  elapsedSeconds: number;
-  durationSeconds: number;
-  volume: number;
-  shuffle: boolean;
-  repeat: boolean;
-  source: "remote" | "local" | "off";
-  serviceUrl?: string;
-  libraryPath?: string;
-  trackIndex: number;
-  trackCount: number;
-}
-
 export interface ModelCatalogItem {
   id: string;
   name?: string;
@@ -170,21 +147,6 @@ export interface TuiState {
   statusMessage: string;
   usage: TokenUsage;
   modelCatalog: ModelCatalogUiState;
-  music: MusicUiState;
   scroll: ScrollState;
   frame: number;
 }
-
-export const emptyMusicUiState = (): MusicUiState => ({
-  available: false,
-  statusMessage: "No tracks loaded",
-  playing: false,
-  elapsedSeconds: 0,
-  durationSeconds: 0,
-  volume: 70,
-  shuffle: false,
-  repeat: false,
-  source: "remote",
-  trackIndex: -1,
-  trackCount: 0,
-});

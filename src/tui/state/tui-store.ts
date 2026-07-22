@@ -10,14 +10,12 @@ import type {
   FocusTarget,
   InspectorTab,
   ModelCatalogItem,
-  MusicUiState,
   OutputViewState,
   OverlayState,
   RuntimeStatusUiState,
   RunPhase,
   TuiState,
 } from "../types.js";
-import { emptyMusicUiState } from "../types.js";
 import {
   displayLine,
   displayOptionalLine,
@@ -28,7 +26,7 @@ const MAX_ACTIVITIES = 500;
 const MAX_ANSWER_CHARS = 200_000;
 const MAX_VIEW_CHARS = 120_000;
 const PINNED_TO_END = Number.MAX_SAFE_INTEGER;
-const FOCUS_ORDER: FocusTarget[] = ["activity", "inspector", "input", "music"];
+const FOCUS_ORDER: FocusTarget[] = ["activity", "inspector", "input"];
 
 export interface TuiStoreOptions {
   providerId: string;
@@ -37,7 +35,6 @@ export interface TuiStoreOptions {
   cwd: string;
   session: SessionState;
   version: string;
-  music?: MusicUiState;
   authentication?: {
     method?: "chatgpt" | "api-key";
     account?: string;
@@ -78,7 +75,6 @@ export class TuiStore {
         status: "loading",
         models: [{ id: options.model }],
       },
-      music: options.music ?? emptyMusicUiState(),
       scroll: {
         activity: PINNED_TO_END,
         inspector: {
@@ -512,10 +508,6 @@ export class TuiStore {
     });
   }
 
-  setMusic(music: MusicUiState): void {
-    this.patch({ music: sanitizeMusic(music) });
-  }
-
   setStatus(message: string): void {
     this.patch({ statusMessage: displayLine(message) });
   }
@@ -779,34 +771,6 @@ function statusForPhase(phase: RunPhase): string {
   if (phase === "cancelled") return "Task interrupted";
   if (phase === "working") return "Working on the active task";
   return "eulr is idle and ready · No active task";
-}
-
-function sanitizeMusic(music: MusicUiState): MusicUiState {
-  return {
-    ...music,
-    statusMessage: displayLine(music.statusMessage),
-    ...(music.libraryPath === undefined
-      ? {}
-      : { libraryPath: displayLine(music.libraryPath) }),
-    ...(music.track === undefined
-      ? {}
-      : {
-          track: {
-            ...music.track,
-            id: displayLine(music.track.id),
-            title: displayLine(music.track.title),
-            ...(music.track.artist === undefined
-              ? {}
-              : { artist: displayLine(music.track.artist) }),
-            ...(music.track.album === undefined
-              ? {}
-              : { album: displayLine(music.track.album) }),
-            ...(music.track.path === undefined
-              ? {}
-              : { path: displayLine(music.track.path) }),
-          },
-        }),
-  };
 }
 
 function sanitizeActivity(item: ActivityItem): ActivityItem {

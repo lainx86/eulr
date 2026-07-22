@@ -33,13 +33,8 @@ describe("RootLayout rendering", () => {
       const mainLine = findLine(lines, "Welcome back.");
       const inputLine = findLine(lines, "eulr ›");
       const dockLine = findLine(lines, "EULR COMPANION");
-      const dock = lines[dockLine] ?? "";
-
       expect(mainLine).toBeLessThan(inputLine);
       expect(inputLine).toBeLessThan(dockLine);
-      expect(dock.indexOf("EULR COMPANION")).toBeLessThan(
-        dock.indexOf("MUSIC PLAYER"),
-      );
     },
   );
 
@@ -273,7 +268,7 @@ describe("RootLayout rendering", () => {
     const dockLine = findLine(lines, "EULR COMPANION");
     expect(permissionLine).toBeLessThan(dockLine);
     expect(controlsLine).toBeLessThan(dockLine);
-    expect(lines[dockLine]).toContain("MUSIC PLAYER");
+    expect(lines[dockLine]).toContain("EULR COMPANION");
   });
 
   it("uses one visible main panel in minimum working mode", () => {
@@ -289,7 +284,6 @@ describe("RootLayout rendering", () => {
     expect(inspectorOutput).toContain("CONTEXT INSPECTOR");
     expect(inspectorOutput).not.toContain("ACTIVITY / PROGRESS");
     expect(inspectorOutput).toContain("EULR COMPANION");
-    expect(inspectorOutput).toContain("MUSIC PLAYER");
   });
 
   it("shows the final answer by default after completion in minimum mode", () => {

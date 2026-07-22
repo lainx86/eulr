@@ -20,7 +20,6 @@ describe("slash command palette", () => {
       "/new",
       "/resume",
       "/sessions",
-      "/music",
       "/compact",
       "/status",
       "/clear",
@@ -31,7 +30,7 @@ describe("slash command palette", () => {
   it("filters prefixes and closes suggestions after an argument starts", () => {
     expect(
       getSlashCommandSuggestions("/m").map(({ command }) => command),
-    ).toEqual(["/model", "/music"]);
+    ).toEqual(["/model"]);
     expect(getSlashCommandSuggestions("/model ")).toEqual([]);
     expect(getSlashCommandSuggestions("ordinary text")).toEqual([]);
   });

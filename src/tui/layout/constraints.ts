@@ -14,11 +14,6 @@ export interface TuiLayout {
   main: LayoutRegion;
   input: LayoutRegion;
   dock: LayoutRegion;
-  dockColumns: {
-    companion: LayoutRegion;
-    music: LayoutRegion;
-    gap: number;
-  };
 }
 
 const RESERVED_HEIGHTS: Record<LayoutMode, { input: number; dock: number }> = {
@@ -63,14 +58,6 @@ export function computeLayout(width: number, height: number): TuiLayout {
     height: dockHeight,
   };
 
-  const gap = safeWidth >= 2 ? 1 : 0;
-  const availableWidth = Math.max(0, safeWidth - gap);
-  const companionWidth =
-    mode === "minimum"
-      ? Math.ceil(availableWidth / 2)
-      : Math.round(availableWidth * 0.38);
-  const musicWidth = availableWidth - companionWidth;
-
   return {
     mode,
     width: safeWidth,
@@ -78,21 +65,6 @@ export function computeLayout(width: number, height: number): TuiLayout {
     main,
     input,
     dock,
-    dockColumns: {
-      companion: {
-        x: dock.x,
-        y: dock.y,
-        width: companionWidth,
-        height: dock.height,
-      },
-      music: {
-        x: dock.x + companionWidth + gap,
-        y: dock.y,
-        width: musicWidth,
-        height: dock.height,
-      },
-      gap,
-    },
   };
 }
 

@@ -1,5 +1,3 @@
-import type { MusicCommand } from "../music/types.js";
-
 export type InteractiveCommand =
   | { name: "help" }
   | { name: "login" }
@@ -8,7 +6,6 @@ export type InteractiveCommand =
   | { name: "new" }
   | { name: "resume"; sessionId?: string }
   | { name: "sessions" }
-  | { name: "music"; command: MusicCommand }
   | { name: "compact" }
   | { name: "status" }
   | { name: "clear" }
@@ -66,12 +63,6 @@ export const INTERACTIVE_COMMANDS: readonly InteractiveCommandDefinition[] = [
     completion: "/sessions",
   },
   {
-    command: "/music",
-    usage: "/music <command>",
-    description: "Control remote or local music playback",
-    completion: "/music ",
-  },
-  {
     command: "/compact",
     usage: "/compact",
     description: "Compact older context",
@@ -121,71 +112,9 @@ export function parseInteractiveCommand(
       return argument
         ? { name: "resume", sessionId: argument }
         : { name: "resume" };
-    case "music":
-      return parseMusicCommand(argument, trimmed);
     default:
       return { name: "unknown", input: trimmed };
   }
-}
-
-function parseMusicCommand(
-  argument: string,
-  input: string,
-): InteractiveCommand {
-  const separator = argument.search(/\s/u);
-  const subcommand = separator < 0 ? argument : argument.slice(0, separator);
-  const value = separator < 0 ? "" : argument.slice(separator).trim();
-
-  switch (subcommand) {
-    case "library":
-      return value
-        ? { name: "music", command: { type: "library", path: value } }
-        : invalidMusic(input, "Usage: /music library <path>");
-    case "play":
-    case "remote":
-    case "local":
-    case "off":
-    case "pause":
-    case "toggle":
-    case "next":
-    case "previous":
-    case "shuffle":
-    case "repeat":
-    case "status":
-      return value
-        ? invalidMusic(
-            input,
-            `/music ${subcommand} does not accept an argument.`,
-          )
-        : { name: "music", command: { type: subcommand } };
-    case "seek": {
-      const seconds = parseFiniteNumber(value);
-      return seconds !== undefined && seconds >= 0
-        ? { name: "music", command: { type: "seek", seconds } }
-        : invalidMusic(input, "Usage: /music seek <nonnegative-seconds>");
-    }
-    case "volume": {
-      const volume = parseFiniteNumber(value);
-      return volume !== undefined && volume >= 0 && volume <= 100
-        ? { name: "music", command: { type: "volume", volume } }
-        : invalidMusic(input, "Usage: /music volume <0-100>");
-    }
-    default:
-      return invalidMusic(
-        input,
-        "Use /music remote, local, off, library, play, pause, toggle, next, previous, seek, volume, shuffle, repeat, or status.",
-      );
-  }
-}
-
-function parseFiniteNumber(value: string): number | undefined {
-  if (value === "") return undefined;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function invalidMusic(input: string, reason: string): InteractiveCommand {
-  return { name: "unknown", input, reason };
 }
 
 const HELP_USAGE_WIDTH = Math.max(
